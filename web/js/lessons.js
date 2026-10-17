@@ -85,11 +85,11 @@ export const LESSONS = Object.freeze([
     },
   },
   {
-    tab: 'Undo',
+    tab: 'History',
     title: 'Step back in time',
     body: [
       'Brubeck records every instruction. `/p` (previous) steps back one instruction and puts back exactly what it changed: registers, memory and the PC. `/n` (next) replays it. The counter at the top of the REPL shows where you are.',
-      'If you step back and then run a new instruction, the steps ahead of you are thrown away, just like typing after an undo in a text editor.',
+      'If you step back and then run a new instruction, the steps ahead of you are thrown away, the way a browser forgets its forward pages once you follow a new link.',
     ],
     examples: [
       { code: 'ADDI x5, zero, 1', note: 'x5 = 1' },
@@ -135,7 +135,7 @@ export const LESSONS = Object.freeze([
     title: 'Build a 32-bit constant',
     body: [
       'An immediate only has 12 bits, so `ADDI` can\'t load a number like 0x12345678 by itself. `LUI` (load upper immediate) fills the top 20 bits of a register and clears the bottom 12: `LUI x1, 0x12345` gives 0x12345000. Then `ADDI` adds the bottom 12 bits.',
-      'The pseudo-instruction `LI` does both steps for you. Brubeck counts it as a single step, so one `/p` undoes it. One catch when doing it by hand: `ADDI` treats its immediate as signed, so if the low part is 0x800 or more, add 1 to the `LUI` value to make up for it.',
+      'The pseudo-instruction `LI` does both steps for you. Brubeck counts it as a single step, so one `/p` steps back over all of it. One catch when doing it by hand: `ADDI` treats its immediate as signed, so if the low part is 0x800 or more, add 1 to the `LUI` value to make up for it.',
     ],
     examples: [
       { code: 'LUI x1, 0x12345', note: 'top 20 bits' },

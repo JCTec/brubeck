@@ -57,7 +57,7 @@ pub fn execute_with_tracking(
 ///
 /// The whole expansion runs as one atomic step: it returns the combined delta
 /// of all executed instructions and records a single history entry, so one
-/// `previous_state()` undoes the entire pseudo-instruction.
+/// `previous_state()` steps back over the entire pseudo-instruction.
 pub fn execute_pseudo(
     pseudo: PseudoInstruction,
     interpreter: &mut crate::interpreter::Interpreter,

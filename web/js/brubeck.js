@@ -256,7 +256,7 @@ export class Emulator {
   /**
    * Steps back one entry in history.
    * @returns {StateDelta} The changes applied to restore the earlier state.
-   * @throws {BrubeckError} With kind `"AtBeginning"` when there is nothing to undo.
+   * @throws {BrubeckError} With kind `"AtBeginning"` when there is no earlier step.
    */
   previous() {
     return this.#call((raw) => toDelta(raw.previous()));
@@ -293,8 +293,9 @@ export class Emulator {
   }
 
   /**
-   * Where the emulator is in its history: `position` steps can be undone and
-   * `length - position` redone.
+   * Where the emulator is in its history: `position` steps back are available
+   * with {@link Emulator#previous}, and `length - position` forward with
+   * {@link Emulator#next}.
    * @returns {{position: number, length: number}}
    */
   get history() {

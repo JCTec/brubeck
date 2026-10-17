@@ -91,7 +91,7 @@ try {
   await run('LI x9, 0x12345678');
   check('LI is one history entry', (await page.textContent('#history')) === 'History 1 / 1', await page.textContent('#history'));
   await run('/p');
-  check('one /p fully undoes LI', (await lastLog())[0].includes('x9: 305419896 → 0'), (await lastLog())[0]);
+  check('one /p steps back over all of LI', (await lastLog())[0].includes('x9: 305419896 → 0'), (await lastLog())[0]);
 
   // Edge cases that used to panic must now be errors, and the REPL keeps working
   await run('LI x1, 1048574');

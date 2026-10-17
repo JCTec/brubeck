@@ -422,7 +422,7 @@ fn history_position_tracks_navigation() {
     assert_eq!((i.history_position(), i.history_len()), (2, 2));
     i.previous_state().unwrap();
     assert_eq!((i.history_position(), i.history_len()), (1, 2));
-    i.interpret("ADDI x3, zero, 3").unwrap(); // truncates the redo branch
+    i.interpret("ADDI x3, zero, 3").unwrap(); // discards the steps ahead
     assert_eq!((i.history_position(), i.history_len()), (2, 2));
     i.interpret("NOP").unwrap();
     i.interpret("NOP").unwrap(); // limit 3 drops the oldest
