@@ -281,3 +281,73 @@ fn merged_delta_keeps_first_old_and_last_new_values() {
     assert_eq!(merged.csr_changes, vec![(0x340, 0, 2)]);
     assert_eq!(merged.pc_change, (0, 8));
 }
+
+// --- Delta tracking ---------------------------------------------------------
+
+#[test]
+fn store_delta_lists_only_changed_bytes() {
+    let mut i = interp();
+    i.interpret("LI x1, 0x100").unwrap();
+    i.interpret("LI x2, 0x11223344").unwrap();
+    let delta = i.interpret("SW x2, 0(x1)").unwrap();
+    let bytes: Vec<(u32, u8, u8)> = delta
+        .memory_changes
+        .iter()
+        .flat_map(|m| {
+            m.old_data
+                .iter()
+                .zip(&m.new_data)
+                .enumerate()
+                .map(move |(k, (&o, &n))| (m.addr + k as u32, o, n))
+        })
+        .collect();
+    assert_eq!(
+        bytes,
+        vec![
+            (0x100, 0, 0x44),
+            (0x101, 0, 0x33),
+            (0x102, 0, 0x22),
+            (0x103, 0, 0x11)
+        ]
+    );
+
+    // Rewriting the same value changes nothing in memory.
+    let delta = i.interpret("SW x2, 0(x1)").unwrap();
+    assert!(delta.memory_changes.is_empty());
+
+    // Overwriting one byte reports just that byte.
+    i.interpret("ADDI x3, x0, 0x55").unwrap();
+    let delta = i.interpret("SB x3, 2(x1)").unwrap();
+    assert_eq!(delta.memory_changes.len(), 1);
+    assert_eq!(delta.memory_changes[0].addr, 0x102);
+    assert_eq!(delta.memory_changes[0].old_data, vec![0x22]);
+    assert_eq!(delta.memory_changes[0].new_data, vec![0x55]);
+}
+
+#[test]
+fn store_history_round_trip() {
+    let mut i = interp();
+    i.interpret("LI x1, 0x200").unwrap();
+    i.interpret("LI x2, -1").unwrap();
+    i.interpret("SW x2, 0(x1)").unwrap();
+    i.previous_state().unwrap();
+    assert!(i.cpu.memory[0x200..0x204].iter().all(|&b| b == 0));
+    i.next_state().unwrap();
+    assert!(i.cpu.memory[0x200..0x204].iter().all(|&b| b == 0xFF));
+}
+
+#[test]
+fn apply_rejects_read_only_csr_without_partial_changes() {
+    use brubeck::rv32_i::Modify;
+    let mut cpu = CPU::new(MEM);
+    let modify = Modify {
+        register_changes: vec![(Register::X5, 77)],
+        memory_changes: vec![(0, vec![1, 2, 3])],
+        csr_changes: vec![(0xC00, 5)], // CYCLE is read-only
+        pc_change: Some(0x40),
+    };
+    assert!(cpu.apply(&modify).is_err());
+    assert_eq!(cpu.get_register(Register::X5), 0, "registers untouched");
+    assert_eq!(&cpu.memory[0..3], &[0, 0, 0], "memory untouched");
+    assert_eq!(cpu.pc, 0, "pc untouched");
+}

@@ -546,6 +546,11 @@ impl CPU {
                     "CSR address 0x{addr:03x} does not exist"
                 )));
             }
+            if self.csr_readonly[addr as usize] {
+                return Err(CPUError::IllegalInstruction(format!(
+                    "CSR address 0x{addr:03x} is read-only"
+                )));
+            }
         }
 
         // All validations passed, now apply changes atomically
@@ -629,21 +634,19 @@ impl CPU {
     /// # Ok::<(), brubeck::rv32_i::CPUError>(())
     /// ```
     pub fn execute(&mut self, instruction: Instruction) -> Result<StateDelta, CPUError> {
-        // Capture state before execution
+        // Capture state before execution. Memory is not snapshotted: stores
+        // report the bytes they change, keeping each step independent of the
+        // memory size.
         let old_pc = self.pc;
         let old_registers = self.get_all_registers_internal();
-        let old_memory = self.memory.clone(); // This is expensive but simple for now
         let old_csrs = self.csrs;
 
-        // Execute the instruction using the existing logic
-        let result = self.execute_internal(instruction);
+        let mut memory_changes = Vec::new();
+        self.execute_internal(instruction, &mut memory_changes)?;
 
-        // If execution failed, don't return a delta
-        result?;
-
-        // Capture state after execution and build delta
         let mut delta = StateDelta::new();
         delta.pc_change = (old_pc, self.pc);
+        delta.memory_changes = memory_changes;
 
         // Track register changes
         let new_registers = self.get_all_registers_internal();
@@ -653,17 +656,6 @@ impl CPU {
                 delta
                     .register_changes
                     .push((Register::from_u32(i as u32), old_val, new_val));
-            }
-        }
-
-        // Track memory changes (simplified - this could be optimized)
-        for (i, (&old_byte, &new_byte)) in old_memory.iter().zip(self.memory.iter()).enumerate() {
-            if old_byte != new_byte {
-                delta.memory_changes.push(MemoryDelta {
-                    addr: i as u32,
-                    old_data: vec![old_byte],
-                    new_data: vec![new_byte],
-                });
             }
         }
 
@@ -677,8 +669,13 @@ impl CPU {
         Ok(delta)
     }
 
-    /// Internal execute method (renamed from the original execute)
-    fn execute_internal(&mut self, instruction: Instruction) -> Result<(), CPUError> {
+    /// Dispatches one instruction. Stores append the bytes they change to
+    /// `memory_changes`; everything else leaves it untouched.
+    fn execute_internal(
+        &mut self,
+        instruction: Instruction,
+        memory_changes: &mut Vec<MemoryDelta>,
+    ) -> Result<(), CPUError> {
         match instruction {
             Instruction::ADD(i) => self.rv32i_add(i),
             Instruction::ADDI(i) => self.rv32i_addi(i),
@@ -702,8 +699,8 @@ impl CPU {
             Instruction::NOP => self.rv32i_nop(),
             Instruction::OR(i) => self.rv32i_or(i),
             Instruction::ORI(i) => self.rv32i_ori(i),
-            Instruction::SB(i) => self.rv32i_sb(i),
-            Instruction::SH(i) => self.rv32i_sh(i),
+            Instruction::SB(i) => self.rv32i_sb(i, memory_changes),
+            Instruction::SH(i) => self.rv32i_sh(i, memory_changes),
             Instruction::SLL(i) => self.rv32i_sll(i),
             Instruction::SLLI(i) => self.rv32i_slli(i),
             Instruction::SLT(i) => self.rv32i_slt(i),
@@ -715,7 +712,7 @@ impl CPU {
             Instruction::SRL(i) => self.rv32i_srl(i),
             Instruction::SRLI(i) => self.rv32i_srli(i),
             Instruction::SUB(i) => self.rv32i_sub(i),
-            Instruction::SW(i) => self.rv32i_sw(i),
+            Instruction::SW(i) => self.rv32i_sw(i, memory_changes),
             Instruction::XOR(i) => self.rv32i_xor(i),
             Instruction::XORI(i) => self.rv32i_xori(i),
             Instruction::FENCE(_) => self.rv32i_fence(),
@@ -1229,30 +1226,57 @@ impl CPU {
 
     /// The SW, SH, and SB instructions store 32-bit, 16-bit, and 8-bit values
     /// from the low bits of register rs2 to memory
-    fn rv32i_sw(&mut self, instruction: SType) -> Result<(), CPUError> {
-        self.store(instruction, 4)?;
+    fn rv32i_sw(
+        &mut self,
+        instruction: SType,
+        changes: &mut Vec<MemoryDelta>,
+    ) -> Result<(), CPUError> {
+        self.store(instruction, 4, changes)?;
         self.increment_pc()
     }
 
-    fn rv32i_sh(&mut self, instruction: SType) -> Result<(), CPUError> {
-        self.store(instruction, 2)?;
+    fn rv32i_sh(
+        &mut self,
+        instruction: SType,
+        changes: &mut Vec<MemoryDelta>,
+    ) -> Result<(), CPUError> {
+        self.store(instruction, 2, changes)?;
         self.increment_pc()
     }
 
-    fn rv32i_sb(&mut self, instruction: SType) -> Result<(), CPUError> {
-        self.store(instruction, 1)?;
+    fn rv32i_sb(
+        &mut self,
+        instruction: SType,
+        changes: &mut Vec<MemoryDelta>,
+    ) -> Result<(), CPUError> {
+        self.store(instruction, 1, changes)?;
         self.increment_pc()
     }
 
     /// Writes the low `width` bytes of rs2 to `rs1 + imm`. The whole access is
-    /// bounds-checked first, so a failing store never writes partially.
-    fn store(&mut self, instruction: SType, width: usize) -> Result<(), CPUError> {
+    /// bounds-checked first, so a failing store never writes partially. Each
+    /// byte whose value actually changes is appended to `changes`.
+    fn store(
+        &mut self,
+        instruction: SType,
+        width: usize,
+        changes: &mut Vec<MemoryDelta>,
+    ) -> Result<(), CPUError> {
         let address = self
             .get_register(instruction.rs1)
             .wrapping_add(instruction.imm.as_u32());
         let range = self.memory_range(address, width)?;
         let src = self.get_register(instruction.rs2).to_le_bytes();
-        self.memory[range].copy_from_slice(&src[..width]);
+        for (offset, (slot, &new)) in self.memory[range].iter_mut().zip(&src[..width]).enumerate() {
+            if *slot != new {
+                changes.push(MemoryDelta {
+                    addr: address.wrapping_add(offset as u32),
+                    old_data: vec![*slot],
+                    new_data: vec![new],
+                });
+                *slot = new;
+            }
+        }
         Ok(())
     }
 
