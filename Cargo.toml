@@ -15,15 +15,18 @@ autobins = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+# The library itself has zero dependencies. Everything below is optional and
+# only pulled in by the `cli` feature, which builds the terminal REPL binary.
+crossterm = { version = "0.29", optional = true }
+clap = { version = "4.5", features = ["derive"], optional = true }
 
-# Binary-only dependencies for the REPL
-[dependencies.crossterm]
-version = "0.29"
-
-[dependencies.clap]
-version = "4.5"
-features = ["derive"]
+[features]
+default = ["cli"]
+# Build the interactive REPL binary. Disable with `--no-default-features`
+# for library-only builds (WASM, embedded).
+cli = ["dep:crossterm", "dep:clap"]
 
 [[bin]]
 name = "brubeck"
 path = "src/bin/brubeck.rs"
+required-features = ["cli"]
