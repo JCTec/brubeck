@@ -72,10 +72,9 @@ pub fn format_instruction_result(delta: &StateDelta) -> String {
 
     // Show memory changes summary
     if !delta.memory_changes.is_empty() {
-        changes.push(format!(
-            "{} memory bytes changed",
-            delta.memory_changes.len()
-        ));
+        // Entries can be multi-byte runs (e.g. merged pseudo-instructions).
+        let bytes: usize = delta.memory_changes.iter().map(|m| m.new_data.len()).sum();
+        changes.push(format!("{bytes} memory bytes changed"));
     }
 
     // Show CSR changes

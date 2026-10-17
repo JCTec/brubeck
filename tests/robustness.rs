@@ -351,3 +351,62 @@ fn apply_rejects_read_only_csr_without_partial_changes() {
     assert_eq!(&cpu.memory[0..3], &[0, 0, 0], "memory untouched");
     assert_eq!(cpu.pc, 0, "pc untouched");
 }
+
+// --- Review findings ------------------------------------------------------
+
+#[test]
+fn failing_csr_instruction_leaves_state_unchanged() {
+    // CSRRS writes rd before discovering the CSR is read-only; the failed
+    // instruction must not leave that write behind (or desync history).
+    let mut i = interp();
+    i.interpret("ADDI x1, zero, 7").unwrap();
+    i.interpret("ADDI x2, zero, 1").unwrap();
+    for op in [
+        "CSRRS x1, 0xC00, x2",
+        "CSRRC x1, 0xC00, x2",
+        "CSRRW x1, 0xC00, x2",
+    ] {
+        assert!(i.interpret(op).is_err(), "{op} targets read-only CYCLE");
+        assert_eq!(
+            i.cpu.get_register(Register::X1),
+            7,
+            "{op} must not change x1"
+        );
+        assert_eq!(i.cpu.pc, 8, "{op} must not move the PC");
+    }
+    for op in [
+        "CSRRSI x1, 0xC00, 1",
+        "CSRRCI x1, 0xC00, 1",
+        "CSRRWI x1, 0xC00, 1",
+    ] {
+        assert!(i.interpret(op).is_err(), "{op} targets read-only CYCLE");
+        assert_eq!(
+            i.cpu.get_register(Register::X1),
+            7,
+            "{op} must not change x1"
+        );
+    }
+    i.previous_state().unwrap();
+    i.previous_state().unwrap();
+    assert_eq!(
+        i.cpu.get_register(Register::X1),
+        0,
+        "history still consistent"
+    );
+}
+
+#[test]
+fn csr_instructions_advance_pc() {
+    for op in [
+        "CSRRW x1, 0x340, x2",
+        "CSRRS x1, 0x340, x2",
+        "CSRRC x1, 0x340, x2",
+        "CSRRWI x1, 0x340, 5",
+        "CSRRSI x1, 0x340, 5",
+        "CSRRCI x1, 0x340, 5",
+    ] {
+        let mut i = interp();
+        let delta = i.interpret(op).unwrap();
+        assert_eq!(delta.pc_change, (0, 4), "{op} must advance the PC by 4");
+    }
+}

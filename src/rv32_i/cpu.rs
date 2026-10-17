@@ -642,7 +642,18 @@ impl CPU {
         let old_csrs = self.csrs;
 
         let mut memory_changes = Vec::new();
-        self.execute_internal(instruction, &mut memory_changes)?;
+        if let Err(error) = self.execute_internal(instruction, &mut memory_changes) {
+            // Some instructions (e.g. CSRRS on a read-only CSR) write rd before
+            // they fault. Restore the snapshot so a failed instruction never
+            // leaves partial changes behind. Memory needs no restore: stores
+            // bounds-check before writing and are the last thing they do.
+            for (i, &value) in old_registers.iter().enumerate() {
+                self.set_register_direct(Register::from_u32(i as u32), value);
+            }
+            self.csrs = old_csrs;
+            self.pc = old_pc;
+            return Err(error);
+        }
 
         let mut delta = StateDelta::new();
         delta.pc_change = (old_pc, self.pc);
@@ -1362,7 +1373,7 @@ impl CPU {
             self.set_register(instruction.rd, old_value);
         }
 
-        Ok(())
+        self.increment_pc()
     }
 
     /// CSRRS (Atomic Read and Set Bits in CSR)
@@ -1401,7 +1412,7 @@ impl CPU {
             self.write_csr(csr_addr, new_value)?;
         }
 
-        Ok(())
+        self.increment_pc()
     }
 
     /// CSRRC (Atomic Read and Clear Bits in CSR)
@@ -1440,7 +1451,7 @@ impl CPU {
             self.write_csr(csr_addr, new_value)?;
         }
 
-        Ok(())
+        self.increment_pc()
     }
 
     /// CSRRWI (Atomic Read/Write CSR Immediate)
@@ -1484,7 +1495,7 @@ impl CPU {
             self.set_register(instruction.rd, old_value);
         }
 
-        Ok(())
+        self.increment_pc()
     }
 
     /// CSRRSI (Atomic Read and Set Bits in CSR Immediate)
@@ -1524,7 +1535,7 @@ impl CPU {
             self.write_csr(csr_addr, new_value)?;
         }
 
-        Ok(())
+        self.increment_pc()
     }
 
     /// CSRRCI (Atomic Read and Clear Bits in CSR Immediate)
@@ -1564,7 +1575,7 @@ impl CPU {
             self.write_csr(csr_addr, new_value)?;
         }
 
-        Ok(())
+        self.increment_pc()
     }
 }
 

@@ -184,6 +184,9 @@ export class Emulator {
   /** Set once the wasm module has trapped; every later call then fails fast. */
   #crashed = false;
 
+  /** Set by {@link Emulator#dispose}; the wasm memory has been released. */
+  #disposed = false;
+
   /**
    * Use {@link Emulator.create} instead; the constructor needs the wasm
    * module to be loaded already.
@@ -210,6 +213,9 @@ export class Emulator {
    * @returns {T}
    */
   #call(operation) {
+    if (this.#disposed) {
+      throw new BrubeckError('Crashed', 'This emulator has been disposed. Create a new one to continue.');
+    }
     if (this.#crashed) {
       throw new BrubeckError('Crashed', 'The emulator crashed. Create a new one to continue.');
     }
@@ -315,9 +321,10 @@ export class Emulator {
     return this.#call((raw) => raw.readCsr(address));
   }
 
-  /** Releases the WebAssembly memory held by this emulator. */
+  /** Releases the WebAssembly memory held by this emulator. Safe to call twice. */
   dispose() {
+    if (this.#disposed) return;
+    this.#disposed = true;
     this.#raw.free();
-    this.#crashed = true;
   }
 }
