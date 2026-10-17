@@ -140,6 +140,16 @@ impl Emulator {
             .map_err(|e| convert::history_error(&e).into())
     }
 
+    /// Moves to `position` in history (0 to `historyLength`), returning the net
+    /// change. Throws `AtEnd` for a position past the end.
+    #[wasm_bindgen(js_name = goTo)]
+    pub fn go_to(&mut self, position: usize) -> Result<Delta, RawError> {
+        self.inner
+            .go_to(position)
+            .map(|d| delta(&d))
+            .map_err(|e| convert::history_error(&e).into())
+    }
+
     /// How many steps back through history are available.
     #[wasm_bindgen(getter, js_name = historyPosition)]
     pub fn history_position(&self) -> usize {

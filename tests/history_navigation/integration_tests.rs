@@ -174,3 +174,107 @@ fn test_invalid_instruction_not_in_history() {
     // Another undo should fail (no more history)
     ctx.previous_should_fail();
 }
+
+// --- go_to: jump to any point in history ----------------------------------
+
+mod go_to {
+    use brubeck::interpreter::Interpreter;
+    use brubeck::rv32_i::Register;
+    use brubeck::HistoryError;
+
+    /// x1 = 1, x1 = 2, x2 = 5, then a store of x2 to address 16.
+    fn four_steps() -> Interpreter {
+        let mut i = Interpreter::with_config(1024, 100);
+        for line in [
+            "ADDI x1, x0, 1",
+            "ADDI x1, x0, 2",
+            "ADDI x2, x0, 5",
+            "SW x2, 16(x0)",
+        ] {
+            i.interpret(line).unwrap();
+        }
+        i
+    }
+
+    #[test]
+    fn going_back_returns_the_net_change() {
+        let mut i = four_steps();
+        let delta = i.go_to(0).unwrap();
+
+        assert_eq!(i.history_position(), 0);
+        assert_eq!(i.history_len(), 4);
+        assert_eq!(i.cpu.get_register(Register::X1), 0);
+        assert_eq!(i.cpu.get_register(Register::X2), 0);
+        assert_eq!(i.cpu.pc, 0);
+        assert_eq!(&i.cpu.memory[16..20], &[0, 0, 0, 0]);
+
+        // One entry per register, from where we were to where we are.
+        assert_eq!(
+            delta.register_changes,
+            vec![(Register::X2, 5, 0), (Register::X1, 2, 0)]
+        );
+        assert_eq!(delta.pc_change, (16, 0));
+        let bytes: usize = delta.memory_changes.iter().map(|m| m.new_data.len()).sum();
+        assert_eq!(bytes, 1, "only the low byte of 5 was non-zero");
+    }
+
+    #[test]
+    fn going_forward_replays_to_the_target() {
+        let mut i = four_steps();
+        i.go_to(0).unwrap();
+        let delta = i.go_to(2).unwrap();
+
+        assert_eq!(i.history_position(), 2);
+        assert_eq!(i.cpu.get_register(Register::X1), 2);
+        assert_eq!(i.cpu.get_register(Register::X2), 0);
+        assert_eq!(i.cpu.pc, 8);
+        // x1 went 0 -> 1 -> 2; the net change is 0 -> 2.
+        assert_eq!(delta.register_changes, vec![(Register::X1, 0, 2)]);
+        assert_eq!(delta.pc_change, (0, 8));
+    }
+
+    #[test]
+    fn matches_stepping_one_at_a_time() {
+        let mut jumped = four_steps();
+        let mut stepped = four_steps();
+        jumped.go_to(1).unwrap();
+        for _ in 0..3 {
+            stepped.previous_state().unwrap();
+        }
+        assert_eq!(jumped.cpu.pc, stepped.cpu.pc);
+        assert_eq!(jumped.cpu.memory, stepped.cpu.memory);
+        for n in 0..32 {
+            let r = Register::from_u32(n);
+            assert_eq!(jumped.cpu.get_register(r), stepped.cpu.get_register(r));
+        }
+    }
+
+    #[test]
+    fn going_to_the_current_position_changes_nothing() {
+        let mut i = four_steps();
+        let delta = i.go_to(4).unwrap();
+        assert!(delta.register_changes.is_empty());
+        assert!(delta.memory_changes.is_empty());
+        assert_eq!(delta.pc_change, (16, 16));
+        assert_eq!(i.history_position(), 4);
+    }
+
+    #[test]
+    fn going_past_the_end_is_an_error_and_changes_nothing() {
+        let mut i = four_steps();
+        i.go_to(1).unwrap();
+        assert!(matches!(i.go_to(5), Err(HistoryError::AtEnd)));
+        assert_eq!(i.history_position(), 1);
+        assert_eq!(i.cpu.get_register(Register::X1), 1);
+    }
+
+    #[test]
+    fn new_instruction_after_going_back_discards_the_steps_ahead() {
+        let mut i = four_steps();
+        i.go_to(1).unwrap();
+        i.interpret("ADDI x3, x0, 3").unwrap();
+        assert_eq!(i.history_len(), 2);
+        assert_eq!(i.history_position(), 2);
+        assert!(matches!(i.go_to(3), Err(HistoryError::AtEnd)));
+    }
+}
