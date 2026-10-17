@@ -1,7 +1,8 @@
 # Brubeck web
 
-The browser front end for Brubeck: the Rust emulator compiled to WebAssembly
-and driven by plain, JSDoc-documented ES modules. No framework, no bundler.
+Brubeck Lab: a guided, six-step introduction to RISC-V assembly running on the
+real Brubeck emulator, compiled from Rust to WebAssembly and driven by plain,
+JSDoc-documented ES modules. No framework, no bundler.
 
 ## Run locally
 
@@ -24,6 +25,10 @@ npm run docs        # JSDoc site in docs/js/
 
 | Path | Purpose |
 |---|---|
-| `js/brubeck.js` | Public API: `Emulator`, `BrubeckError`, `StateDelta` typedefs |
-| `js/smoke.js` | Phase 1 smoke-test console |
+| `js/brubeck.js` | Public API over the wasm bindings: `Emulator`, `BrubeckError`, `StateDelta` typedefs |
+| `js/lessons.js` | The six lessons: text, click-to-paste examples, challenges. Edit content here |
+| `js/lab.js` | Entry point: wires lessons, REPL, registers and saved progress together |
+| `js/repl.js` | Terminal log and prompt, slash commands (`/regs`, `/memory`, `/p`, `/n`, ...) |
+| `js/registers.js` | Register panel rendering |
+| `css/lab.css` | Styles, following the Brubeck Lab design |
 | `pkg/` | wasm-pack output (generated, not committed) |

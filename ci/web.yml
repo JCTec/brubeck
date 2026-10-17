@@ -78,7 +78,7 @@ jobs:
       - name: Assemble site
         run: |
           mkdir -p _site
-          cp -r web/index.html web/js web/pkg web/docs _site/
+          cp -r web/index.html web/css web/js web/pkg web/docs _site/
           rm -f _site/pkg/.gitignore
           touch _site/.nojekyll
 
