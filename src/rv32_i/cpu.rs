@@ -7,6 +7,7 @@
 //! stored in memory as `[0xab, 0x12]`.
 
 use super::*;
+use std::ops::Range;
 
 // Standard CSR addresses
 const CSR_CYCLE: u16 = 0xC00; // Cycle counter (read-only)
@@ -681,7 +682,7 @@ impl CPU {
      */
 
     fn increment_pc(&mut self) -> Result<(), CPUError> {
-        self.pc += Instruction::LENGTH;
+        self.pc = self.pc.wrapping_add(Instruction::LENGTH);
         Ok(())
     }
 
@@ -808,7 +809,7 @@ impl CPU {
         let mut imm = instruction.imm.as_u32();
         imm <<= 12;
         let pc = self.pc;
-        let value = imm + pc;
+        let value = imm.wrapping_add(pc);
         self.set_register(instruction.rd, value);
 
         self.increment_pc()
@@ -998,7 +999,7 @@ impl CPU {
         let offset_address = self.pc.wrapping_add(offset);
 
         // validate the offset address is 32-bit aligned
-        if offset_address % 4 != 0 {
+        if !offset_address.is_multiple_of(4) {
             return Err(CPUError::MisalignedJump(offset_address));
         }
 
@@ -1029,7 +1030,7 @@ impl CPU {
         offset_address <<= 1;
 
         // validate the offset address is 32-bit aligned
-        if offset_address % 4 != 0 {
+        if !offset_address.is_multiple_of(4) {
             return Err(CPUError::MisalignedJump(offset_address));
         }
 
@@ -1057,7 +1058,7 @@ impl CPU {
             offset <<= 1; // multiple of 2
             self.pc = self.pc.wrapping_add(offset);
         } else {
-            self.pc += Instruction::LENGTH;
+            self.pc = self.pc.wrapping_add(Instruction::LENGTH);
         }
 
         Ok(())
@@ -1072,7 +1073,7 @@ impl CPU {
             offset <<= 1; // multiple of 2
             self.pc = self.pc.wrapping_add(offset);
         } else {
-            self.pc += Instruction::LENGTH;
+            self.pc = self.pc.wrapping_add(Instruction::LENGTH);
         }
 
         Ok(())
@@ -1089,7 +1090,7 @@ impl CPU {
             offset <<= 1; // multiple of 2
             self.pc = self.pc.wrapping_add(offset);
         } else {
-            self.pc += Instruction::LENGTH;
+            self.pc = self.pc.wrapping_add(Instruction::LENGTH);
         }
 
         Ok(())
@@ -1104,7 +1105,7 @@ impl CPU {
             offset <<= 1; // multiple of 2
             self.pc = self.pc.wrapping_add(offset);
         } else {
-            self.pc += Instruction::LENGTH;
+            self.pc = self.pc.wrapping_add(Instruction::LENGTH);
         }
 
         Ok(())
@@ -1121,7 +1122,7 @@ impl CPU {
             offset <<= 1; // multiple of 2
             self.pc = self.pc.wrapping_add(offset);
         } else {
-            self.pc += Instruction::LENGTH;
+            self.pc = self.pc.wrapping_add(Instruction::LENGTH);
         }
 
         Ok(())
@@ -1136,7 +1137,7 @@ impl CPU {
             offset <<= 1; // multiple of 2
             self.pc = self.pc.wrapping_add(offset);
         } else {
-            self.pc += Instruction::LENGTH;
+            self.pc = self.pc.wrapping_add(Instruction::LENGTH);
         }
 
         Ok(())
@@ -1148,22 +1149,31 @@ impl CPU {
     /// sign-extended 12-bit offset. Loads copy a value from memory to register
     /// rd. Stores copy the value in register rs2 to memory
     ///
+    /// Returns the memory range for a `width`-byte access at `address`, or an
+    /// access violation (carrying the effective address) if any byte of the
+    /// access falls outside memory.
+    fn memory_range(&self, address: u32, width: usize) -> Result<Range<usize>, CPUError> {
+        let start = address as usize;
+        match start.checked_add(width) {
+            Some(end) if end <= self.memory.len() => Ok(start..end),
+            _ => Err(CPUError::AccessViolation(address)),
+        }
+    }
+
+    /// Reads `N` little-endian bytes from the effective address `rs1 + imm`.
+    fn load_bytes<const N: usize>(&self, instruction: &IType) -> Result<[u8; N], CPUError> {
+        let address = self
+            .get_register(instruction.rs1)
+            .wrapping_add(instruction.imm.as_u32());
+        let range = self.memory_range(address, N)?;
+        let mut bytes = [0u8; N];
+        bytes.copy_from_slice(&self.memory[range]);
+        Ok(bytes)
+    }
+
     /// The LW instruction loads a 32-bit value from memory into rd.
     fn rv32i_lw(&mut self, instruction: IType) -> Result<(), CPUError> {
-        let rs1 = self.get_register(instruction.rs1);
-        let imm = instruction.imm.as_u32();
-
-        let offset = rs1.wrapping_add(imm);
-        let index = offset as usize;
-
-        if index >= self.memory.len() {
-            return Err(CPUError::AccessViolation(rs1));
-        }
-
-        let mut value_buf = [0u8; 4];
-        value_buf.clone_from_slice(&self.memory[index..index + 4]);
-        let value = u32::from_le_bytes(value_buf);
-
+        let value = u32::from_le_bytes(self.load_bytes::<4>(&instruction)?);
         self.set_register(instruction.rd, value);
         self.increment_pc()
     }
@@ -1171,87 +1181,32 @@ impl CPU {
     /// LH loads a 16-bit value from memory, then sign-extends to 32-bits before
     /// storing in rd.
     fn rv32i_lh(&mut self, instruction: IType) -> Result<(), CPUError> {
-        let rs1 = self.get_register(instruction.rs1);
-        let imm = instruction.imm.as_u32();
-
-        let offset = rs1.wrapping_add(imm);
-        let index = offset as usize;
-
-        if index >= self.memory.len() {
-            return Err(CPUError::AccessViolation(rs1));
-        }
-
-        let mut value_buf = [0u8; 2];
-        value_buf.clone_from_slice(&self.memory[index..index + 2]);
-        let u16_value = u16::from_le_bytes(value_buf);
-        // Sign-extend from 16-bit to 32-bit
-        let value = u16_value as i16 as i32 as u32;
-
-        self.set_register(instruction.rd, value);
+        let value = i16::from_le_bytes(self.load_bytes::<2>(&instruction)?);
+        self.set_register(instruction.rd, i32::from(value) as u32);
         self.increment_pc()
     }
 
     /// LHU loads a 16-bit value from memory but then zero extends to 32-bits
     /// before storing in rd.
     fn rv32i_lhu(&mut self, instruction: IType) -> Result<(), CPUError> {
-        let rs1 = self.get_register(instruction.rs1);
-        let imm = instruction.imm.as_u32();
-
-        let offset = rs1.wrapping_add(imm);
-        let index = offset as usize;
-
-        if index >= self.memory.len() {
-            return Err(CPUError::AccessViolation(rs1));
-        }
-
-        let mut value_buf = [0u8; 2];
-        value_buf.clone_from_slice(&self.memory[index..index + 2]);
-        let u16_value = u16::from_le_bytes(value_buf);
-
-        let value = u16_value as u32;
-
-        self.set_register(instruction.rd, value);
+        let value = u16::from_le_bytes(self.load_bytes::<2>(&instruction)?);
+        self.set_register(instruction.rd, u32::from(value));
         self.increment_pc()
     }
 
     /// LB loads a 8-bit value from memory, then sign-extends to 32-bits before
     /// storing in rd.
     fn rv32i_lb(&mut self, instruction: IType) -> Result<(), CPUError> {
-        let rs1 = self.get_register(instruction.rs1);
-        let imm = instruction.imm.as_u32();
-
-        let offset = rs1.wrapping_add(imm);
-        let index = offset as usize;
-
-        if index >= self.memory.len() {
-            return Err(CPUError::AccessViolation(rs1));
-        }
-
-        let u8_value = self.memory[index];
-        // Sign-extend from 8-bit to 32-bit
-        let value = u8_value as i8 as i32 as u32;
-
-        self.set_register(instruction.rd, value);
+        let value = i8::from_le_bytes(self.load_bytes::<1>(&instruction)?);
+        self.set_register(instruction.rd, i32::from(value) as u32);
         self.increment_pc()
     }
 
     /// LBU loads a 8-bit value from memory but then zero extends to 32-bits
     /// before storing in rd.
     fn rv32i_lbu(&mut self, instruction: IType) -> Result<(), CPUError> {
-        let rs1 = self.get_register(instruction.rs1);
-        let imm = instruction.imm.as_u32();
-
-        let offset = rs1.wrapping_add(imm);
-        let index = offset as usize;
-
-        if index >= self.memory.len() {
-            return Err(CPUError::AccessViolation(rs1));
-        }
-
-        let u8_value = self.memory[index];
-        let value = u8_value as u32;
-
-        self.set_register(instruction.rd, value);
+        let value = u8::from_le_bytes(self.load_bytes::<1>(&instruction)?);
+        self.set_register(instruction.rd, u32::from(value));
         self.increment_pc()
     }
 
@@ -1272,25 +1227,15 @@ impl CPU {
         self.increment_pc()
     }
 
-    fn store(&mut self, instruction: SType, bytes: usize) -> Result<(), CPUError> {
-        let base = self.get_register(instruction.rs1);
-        let src = self.get_register(instruction.rs2);
-        let imm = instruction.imm.as_u32();
-
-        let address = base.wrapping_add(imm);
-        let mut index = address as usize;
-
-        if index >= self.memory.len() {
-            return Err(CPUError::AccessViolation(address));
-        }
-
-        for (byte_index, byte) in src.to_le_bytes().into_iter().enumerate() {
-            if byte_index < bytes {
-                self.memory[index] = byte;
-                index += 1;
-            }
-        }
-
+    /// Writes the low `width` bytes of rs2 to `rs1 + imm`. The whole access is
+    /// bounds-checked first, so a failing store never writes partially.
+    fn store(&mut self, instruction: SType, width: usize) -> Result<(), CPUError> {
+        let address = self
+            .get_register(instruction.rs1)
+            .wrapping_add(instruction.imm.as_u32());
+        let range = self.memory_range(address, width)?;
+        let src = self.get_register(instruction.rs2).to_le_bytes();
+        self.memory[range].copy_from_slice(&src[..width]);
         Ok(())
     }
 
