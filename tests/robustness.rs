@@ -80,9 +80,11 @@ fn stores_fitting_exactly_at_end_of_memory_succeed() {
 fn access_violation_reports_effective_address() {
     let mut cpu = CPU::new(MEM);
     cpu.set_register(Register::X1, 1000);
-    let mut lw = brubeck::rv32_i::IType::new();
-    lw.rd = Register::X2;
-    lw.rs1 = Register::X1;
+    let mut lw = brubeck::rv32_i::IType {
+        rd: Register::X2,
+        rs1: Register::X1,
+        ..Default::default()
+    };
     lw.imm.set_signed(100).unwrap();
     match cpu.execute(Instruction::LW(lw)) {
         Err(CPUError::AccessViolation(addr)) => assert_eq!(addr, 1100),
@@ -103,7 +105,7 @@ fn access_at_top_of_address_space_does_not_overflow() {
 
 #[test]
 fn pc_wraps_instead_of_panicking() {
-    let mut cpu = CPU::default();
+    let mut cpu = CPU::new(MEM);
     cpu.pc = 0xFFFF_FFFC;
     cpu.execute(Instruction::NOP).unwrap();
     assert_eq!(cpu.pc, 0);
@@ -111,12 +113,14 @@ fn pc_wraps_instead_of_panicking() {
 
 #[test]
 fn not_taken_branch_wraps_pc() {
-    let mut cpu = CPU::default();
+    let mut cpu = CPU::new(MEM);
     cpu.pc = 0xFFFF_FFFC;
     cpu.set_register(Register::X1, 1);
-    let mut beq = brubeck::rv32_i::BType::new();
-    beq.rs1 = Register::X0;
-    beq.rs2 = Register::X1;
+    let mut beq = brubeck::rv32_i::BType {
+        rs1: Register::X0,
+        rs2: Register::X1,
+        ..Default::default()
+    };
     beq.imm.set_signed(4).unwrap();
     cpu.execute(Instruction::BEQ(beq)).unwrap();
     assert_eq!(cpu.pc, 0);
@@ -124,10 +128,12 @@ fn not_taken_branch_wraps_pc() {
 
 #[test]
 fn auipc_wraps_instead_of_panicking() {
-    let mut cpu = CPU::default();
+    let mut cpu = CPU::new(MEM);
     cpu.pc = 0x2000;
-    let mut auipc = brubeck::rv32_i::UType::new();
-    auipc.rd = Register::X1;
+    let mut auipc = brubeck::rv32_i::UType {
+        rd: Register::X1,
+        ..Default::default()
+    };
     auipc.imm.set_signed(-1).unwrap(); // 0xFFFFF000 after the shift
     cpu.execute(Instruction::AUIPC(auipc)).unwrap();
     assert_eq!(cpu.get_register(Register::X1), 0x1000);
@@ -211,4 +217,67 @@ fn not_taken_branch_ignores_misaligned_target() {
     i.interpret("ADDI x1, x0, 1").unwrap();
     assert!(i.interpret("BEQ x0, x1, 6").is_ok());
     assert_eq!(i.cpu.pc, 8);
+}
+
+// --- Multi-instruction pseudo-instructions ---------------------------------
+
+#[test]
+fn li_returns_one_combined_delta() {
+    let mut i = Interpreter::new();
+    let delta = i.interpret("LI x1, 0x12345678").unwrap();
+    assert_eq!(delta.register_changes, vec![(Register::X1, 0, 0x1234_5678)]);
+    assert_eq!(delta.pc_change, (0, 8));
+}
+
+#[test]
+fn li_is_a_single_history_entry() {
+    let mut i = Interpreter::new();
+    i.interpret("LI x1, 0x12345678").unwrap();
+
+    i.previous_state().unwrap();
+    assert_eq!(i.cpu.get_register(Register::X1), 0);
+    assert_eq!(i.cpu.pc, 0);
+    assert!(i.previous_state().is_err(), "LI must be one entry, not two");
+
+    i.next_state().unwrap();
+    assert_eq!(i.cpu.get_register(Register::X1), 0x1234_5678);
+    assert_eq!(i.cpu.pc, 8);
+}
+
+#[test]
+fn merged_delta_keeps_first_old_and_last_new_values() {
+    use brubeck::rv32_i::{MemoryDelta, StateDelta};
+    let first = StateDelta {
+        register_changes: vec![(Register::X1, 0, 5), (Register::X2, 7, 8)],
+        memory_changes: vec![MemoryDelta {
+            addr: 10,
+            old_data: vec![0, 0],
+            new_data: vec![1, 2],
+        }],
+        csr_changes: vec![(0x340, 0, 1)],
+        pc_change: (0, 4),
+    };
+    let second = StateDelta {
+        register_changes: vec![(Register::X1, 5, 9), (Register::X2, 8, 7)],
+        memory_changes: vec![MemoryDelta {
+            addr: 11,
+            old_data: vec![2],
+            new_data: vec![3],
+        }],
+        csr_changes: vec![(0x340, 1, 2)],
+        pc_change: (4, 8),
+    };
+    let merged = first.merge(second);
+    // x2 went 7 -> 8 -> 7: no net change, so it disappears.
+    assert_eq!(merged.register_changes, vec![(Register::X1, 0, 9)]);
+    assert_eq!(
+        merged.memory_changes,
+        vec![MemoryDelta {
+            addr: 10,
+            old_data: vec![0, 0],
+            new_data: vec![1, 3]
+        }]
+    );
+    assert_eq!(merged.csr_changes, vec![(0x340, 0, 2)]);
+    assert_eq!(merged.pc_change, (0, 8));
 }

@@ -187,13 +187,42 @@ impl Interpreter {
         &mut self,
         instruction: Instruction,
     ) -> Result<StateDelta, crate::rv32_i::CPUError> {
-        // Execute the instruction and get the delta
-        let delta = self.cpu.execute(instruction)?;
+        self.execute_sequence(std::slice::from_ref(&instruction))
+    }
 
-        // Record the delta in history
+    /// Executes `instructions` as one atomic step and records a single history
+    /// entry for them.
+    ///
+    /// The returned delta is the net change of the whole sequence. If any
+    /// instruction fails, the ones already executed are rolled back, so the CPU
+    /// is left exactly as it was before the call.
+    pub fn execute_sequence(
+        &mut self,
+        instructions: &[Instruction],
+    ) -> Result<StateDelta, crate::rv32_i::CPUError> {
+        let mut combined: Option<StateDelta> = None;
+        for &instruction in instructions {
+            match self.cpu.execute(instruction) {
+                Ok(delta) => {
+                    combined = Some(match combined {
+                        Some(earlier) => earlier.merge(delta),
+                        None => delta,
+                    });
+                }
+                Err(error) => {
+                    if let Some(partial) = combined {
+                        // Restoring values we just read cannot fail.
+                        let _ = self.cpu.apply(&partial.to_reverse_modify());
+                    }
+                    return Err(error);
+                }
+            }
+        }
+
+        let delta = combined.ok_or_else(|| {
+            crate::rv32_i::CPUError::IllegalInstruction("empty instruction sequence".to_string())
+        })?;
         self.history.record_delta(delta.clone());
-
-        // Return the delta
         Ok(delta)
     }
 

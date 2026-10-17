@@ -7,6 +7,7 @@
 //! stored in memory as `[0xab, 0x12]`.
 
 use super::*;
+use std::collections::BTreeMap;
 use std::ops::Range;
 
 // Standard CSR addresses
@@ -101,6 +102,64 @@ impl StateDelta {
                 .map(|(addr, _old, new)| (*addr, *new))
                 .collect(),
             pc_change: Some(self.pc_change.1),
+        }
+    }
+}
+
+impl StateDelta {
+    /// Combines this delta with `later`, a delta recorded immediately after it,
+    /// into one delta describing the net change of both.
+    ///
+    /// For every register, CSR and memory byte, the merged delta keeps the
+    /// value before `self` and the value after `later`; anything that ends up
+    /// back at its original value is dropped. Used to make a pseudo-instruction
+    /// that expands to several instructions (such as `LI`) a single step.
+    pub fn merge(self, later: StateDelta) -> StateDelta {
+        fn merge_values<K: PartialEq + Copy>(
+            earlier: Vec<(K, u32, u32)>,
+            later: Vec<(K, u32, u32)>,
+        ) -> Vec<(K, u32, u32)> {
+            let mut merged = earlier;
+            for (key, old, new) in later {
+                match merged.iter_mut().find(|(k, _, _)| *k == key) {
+                    Some(entry) => entry.2 = new,
+                    None => merged.push((key, old, new)),
+                }
+            }
+            merged.retain(|(_, old, new)| old != new);
+            merged
+        }
+
+        // Memory is merged per byte, then coalesced back into contiguous runs.
+        let mut bytes: BTreeMap<u32, (u8, u8)> = BTreeMap::new();
+        for change in self.memory_changes.into_iter().chain(later.memory_changes) {
+            for (offset, (&old, &new)) in change.old_data.iter().zip(&change.new_data).enumerate() {
+                bytes
+                    .entry(change.addr.wrapping_add(offset as u32))
+                    .and_modify(|entry| entry.1 = new)
+                    .or_insert((old, new));
+            }
+        }
+        let mut memory_changes: Vec<MemoryDelta> = Vec::new();
+        for (addr, (old, new)) in bytes.into_iter().filter(|(_, (old, new))| old != new) {
+            match memory_changes.last_mut() {
+                Some(run) if run.addr.wrapping_add(run.new_data.len() as u32) == addr => {
+                    run.old_data.push(old);
+                    run.new_data.push(new);
+                }
+                _ => memory_changes.push(MemoryDelta {
+                    addr,
+                    old_data: vec![old],
+                    new_data: vec![new],
+                }),
+            }
+        }
+
+        StateDelta {
+            register_changes: merge_values(self.register_changes, later.register_changes),
+            memory_changes,
+            csr_changes: merge_values(self.csr_changes, later.csr_changes),
+            pc_change: (self.pc_change.0, later.pc_change.1),
         }
     }
 }

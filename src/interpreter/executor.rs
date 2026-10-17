@@ -55,8 +55,9 @@ pub fn execute_with_tracking(
 ///
 /// # State Tracking
 ///
-/// For pseudo-instructions that expand to multiple instructions, this returns
-/// the combined delta of all executed instructions.
+/// The whole expansion runs as one atomic step: it returns the combined delta
+/// of all executed instructions and records a single history entry, so one
+/// `previous_state()` undoes the entire pseudo-instruction.
 pub fn execute_pseudo(
     pseudo: PseudoInstruction,
     interpreter: &mut crate::interpreter::Interpreter,
@@ -65,24 +66,5 @@ pub fn execute_pseudo(
         .expand()
         .map_err(|e| Error::Generic(format!("Failed to expand pseudo-instruction: {e}")))?;
 
-    // For single instruction expansions, just return that delta
-    if instructions.len() == 1 {
-        return execute_with_tracking(instructions[0], interpreter);
-    }
-
-    // For multiple instructions, we need to merge the deltas
-    // We'll execute all instructions and return the last delta
-    // (which represents the cumulative change from the initial state)
-    let mut last_delta = None;
-    for inst in instructions {
-        match execute_with_tracking(inst, interpreter) {
-            Ok(delta) => last_delta = Some(delta),
-            Err(e) => return Err(e),
-        }
-    }
-
-    // This should never happen since we checked len > 0
-    last_delta.ok_or_else(|| {
-        Error::Generic("No instructions in pseudo-instruction expansion".to_string())
-    })
+    Ok(interpreter.execute_sequence(&instructions)?)
 }
