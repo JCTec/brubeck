@@ -7,11 +7,13 @@
 
 import { Emulator, BrubeckError } from './brubeck.js';
 import { LESSONS } from './lessons.js';
-import { Repl, destinationRegister } from './repl.js';
-import { renderRegisters } from './registers.js';
+import { Repl, destinationRegister, parseAddress } from './repl.js';
+import { renderRegisters, hex32 } from './registers.js';
+import { renderMemory, windowStart, WINDOW_SIZE } from './memory.js';
 
 /** @typedef {import('./lessons.js').LabState} LabState */
 /** @typedef {import('./repl.js').StepEvent} StepEvent */
+/** @typedef {import('./brubeck.js').StateDelta} StateDelta */
 
 const STORAGE_KEY = 'brubeck-lab:v1';
 
@@ -104,6 +106,13 @@ const el = {
   btnReset: $('btn-reset', HTMLButtonElement),
   btnClear: $('btn-clear', HTMLButtonElement),
   registers: $('registers', HTMLElement),
+  tabRegisters: $('tab-registers', HTMLButtonElement),
+  tabMemory: $('tab-memory', HTMLButtonElement),
+  viewRegisters: $('view-registers', HTMLElement),
+  viewMemory: $('view-memory', HTMLElement),
+  memory: $('memory', HTMLElement),
+  memAddr: $('mem-addr', HTMLInputElement),
+  memAddrHelp: $('mem-addr-help', HTMLElement),
   pcValue: $('pc-value', HTMLElement),
   log: $('log', HTMLElement),
   form: $('prompt', HTMLFormElement),
@@ -136,6 +145,14 @@ class Lab {
   /** @type {HTMLButtonElement[]} */ #tabButtons = [];
   /** History position when the current scrubber gesture began, or null. */
   /** @type {number | null} */ #scrubFrom = null;
+  /** Which view the dark panel shows. */
+  /** @type {'registers' | 'memory'} */ #view = 'registers';
+  /** Memory addresses changed by the last step. */
+  /** @type {Set<number>} */ #memoryChanged = new Set();
+  /** Lowest address changed by the most recent step that changed memory. */
+  /** @type {number | null} */ #lastWrite = null;
+  /** Address typed into the memory view, or null to follow the last write. */
+  /** @type {number | null} */ #pinned = null;
 
   /** @param {Emulator} emulator */
   constructor(emulator) {
@@ -149,6 +166,23 @@ class Lab {
     // `input` fires while dragging and per arrow key; `change` once the move ends.
     el.scrubber.addEventListener('input', () => this.#scrub(false));
     el.scrubber.addEventListener('change', () => this.#scrub(true));
+    el.tabRegisters.addEventListener('click', () => this.#showView('registers'));
+    el.tabMemory.addEventListener('click', () => this.#showView('memory'));
+    for (const tab of [el.tabRegisters, el.tabMemory]) {
+      tab.addEventListener('keydown', (event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const view = event.key === 'Home' ? 'registers'
+          : event.key === 'End' ? 'memory'
+          : this.#view === 'registers' ? 'memory' : 'registers';
+        this.#showView(view);
+        (view === 'registers' ? el.tabRegisters : el.tabMemory).focus();
+      });
+    }
+    el.memAddr.addEventListener('change', () => this.#setAddress());
+    el.memAddr.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') this.#setAddress();
+    });
     el.prevStep.addEventListener('click', () => this.open(this.#progress.current - 1));
     el.nextStep.addEventListener('click', () => this.open(this.#progress.current + 1));
     el.hintToggle.addEventListener('click', () => this.#toggleHint());
@@ -237,7 +271,7 @@ class Lab {
     }
     if (event.kind === 'error' || event.kind === 'clear') return;
     this.#used.add(event.token);
-    if (event.delta) this.#changed = event.delta.registers.map((r) => r.index);
+    if (event.delta) this.#noteDelta(event.delta);
 
     if (event.kind === 'instruction' && event.delta) {
       // The new instruction is the latest history entry; anything that was
@@ -254,7 +288,7 @@ class Lab {
       while (this.#trail.length > length) this.#trail.shift();
     } else if (event.kind === 'reset') {
       this.#trail = [];
-      this.#changed = [];
+      this.#forgetChanges();
     }
 
     this.#refreshMachine();
@@ -283,13 +317,77 @@ class Lab {
       return;
     }
     if (!done) {
-      this.#changed = delta.registers.map((r) => r.index);
+      this.#noteDelta(delta);
       this.#refreshMachine();
       return;
     }
     this.#scrubFrom = null;
     if (to === from) this.#refreshMachine();
     else this.#repl.reportMove(delta, from, to);
+  }
+
+  /**
+   * Remembers what a step changed, for the highlights and the memory view.
+   * @param {StateDelta} delta
+   */
+  #noteDelta(delta) {
+    this.#changed = delta.registers.map((r) => r.index);
+    const addresses = delta.memory.map((m) => m.address);
+    this.#memoryChanged = new Set(addresses);
+    if (addresses.length) this.#lastWrite = Math.min(...addresses);
+  }
+
+  /** Clears highlights and the last-write marker (after a reset). */
+  #forgetChanges() {
+    this.#changed = [];
+    this.#memoryChanged = new Set();
+    this.#lastWrite = null;
+  }
+
+  /**
+   * Switches the dark panel between registers and memory.
+   * @param {'registers' | 'memory'} view
+   */
+  #showView(view) {
+    this.#view = view;
+    const memory = view === 'memory';
+    el.tabRegisters.setAttribute('aria-selected', String(!memory));
+    el.tabMemory.setAttribute('aria-selected', String(memory));
+    el.tabRegisters.tabIndex = memory ? -1 : 0;
+    el.tabMemory.tabIndex = memory ? 0 : -1;
+    el.viewRegisters.hidden = memory;
+    el.viewMemory.hidden = !memory;
+    this.#refreshMachine();
+  }
+
+  /** Applies the memory view's address field: an address pins the view; empty follows writes. */
+  #setAddress() {
+    const text = el.memAddr.value.trim();
+    const address = text ? parseAddress(text) : null;
+    const valid = !text || (address !== null && address < this.#emu.memorySize);
+    el.memAddr.setAttribute('aria-invalid', String(!valid));
+    if (!valid) {
+      el.memAddrHelp.textContent = `Not an address in memory (0x00000000 to ${hex32(this.#emu.memorySize - 1)}).`;
+      return;
+    }
+    this.#pinned = address;
+    this.#refreshMachine();
+  }
+
+  /** Redraws the memory grid around the pinned address, the last write, or the PC. */
+  #renderMemory() {
+    const size = this.#emu.memorySize;
+    const focus = this.#pinned ?? this.#lastWrite ?? this.#emu.pc;
+    const start = windowStart(focus, size);
+    const bytes = this.#emu.readMemory(start, Math.min(WINDOW_SIZE, size - start));
+    renderMemory(el.memory, bytes, start, this.#memoryChanged);
+    if (el.memAddr.getAttribute('aria-invalid') === 'true') return;
+    el.memAddr.placeholder = hex32(focus);
+    el.memAddrHelp.textContent = this.#pinned !== null
+      ? 'Hex or decimal. Clear it to follow the last write.'
+      : this.#lastWrite !== null
+        ? 'Following the last write. Type an address to look elsewhere.'
+        : 'No writes yet, so showing the PC. Type an address to look elsewhere.';
   }
 
   /** Replaces a crashed emulator with a fresh one so the lab keeps working. */
@@ -302,7 +400,7 @@ class Lab {
     this.#emu = new Emulator();
     this.#repl.setEmulator(this.#emu);
     this.#trail = [];
-    this.#changed = [];
+    this.#forgetChanges();
     this.#repl.print('The emulator was restarted. Registers, memory and history were reset.', 'tip');
     this.#refreshMachine();
     this.#evaluate(false);
@@ -311,6 +409,7 @@ class Lab {
   /** Redraws registers, PC and history controls from the emulator. */
   #refreshMachine() {
     renderRegisters(el.registers, el.pcValue, this.#emu.registers(), this.#emu.pc, this.#changed);
+    if (this.#view === 'memory') this.#renderMemory();
     const { position, length } = this.#emu.history;
     el.history.textContent = `History ${position} / ${length}`;
     el.scrubber.max = String(length);

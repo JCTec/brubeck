@@ -156,7 +156,7 @@ export const LESSONS = Object.freeze([
     title: 'Store and load',
     body: [
       'There are only 32 registers, but memory is large: 1 MiB here, one address per byte. `SW x2, 0(x1)` stores the 32-bit word in x2 at address x1 + 0. `LW x3, 0(x1)` loads it back. The `offset(base)` form lets you reach nearby addresses without changing the base register.',
-      'RISC-V is little-endian: the lowest byte of a word goes at the lowest address. Store 0x11223344 and look with `/memory`; you\'ll see 44 33 22 11.',
+      'RISC-V is little-endian: the lowest byte of a word goes at the lowest address. Store 0x11223344 and look with `/memory`, or switch the dark panel to Memory; you\'ll see 44 33 22 11.',
     ],
     examples: [
       { code: 'LI x1, 0x100', note: 'base address' },

@@ -123,6 +123,31 @@ try {
   await run('ADDI x3, zero, 3');
   check('running after scrubbing back discards the steps ahead', (await page.textContent('#history')) === 'History 3 / 3', await page.textContent('#history'));
 
+  // --- Memory panel ------------------------------------------------------------
+  await page.focus('#tab-registers');
+  await page.keyboard.press('ArrowRight');
+  check('memory tab opens from the keyboard',
+    (await page.getAttribute('#tab-memory', 'aria-selected')) === 'true' && !(await page.isVisible('#registers')));
+  await run('LI x1, 0x200');
+  await run('LI x2, 0x11223344');
+  await run('SW x2, 4(x1)');
+  const memState = () => page.evaluate(() => ({
+    first: document.querySelector('.memory-row .addr')?.textContent,
+    changed: [...document.querySelectorAll('.byte.changed')].map((e) => e.firstChild?.textContent).join(' '),
+  }));
+  let mem = await memState();
+  check('memory view follows the last write', mem.first === '0x000001e8' && mem.changed === '44 33 22 11', JSON.stringify(mem));
+  await page.fill('#mem-addr', '0x40');
+  await page.press('#mem-addr', 'Enter');
+  mem = await memState();
+  check('memory address field pins the view', mem.first === '0x00000028', JSON.stringify(mem));
+  await page.fill('#mem-addr', 'nope');
+  await page.press('#mem-addr', 'Enter');
+  check('invalid memory address is flagged', (await page.getAttribute('#mem-addr', 'aria-invalid')) === 'true');
+  await page.fill('#mem-addr', '');
+  await page.press('#mem-addr', 'Enter');
+  await page.click('#tab-registers');
+
   // --- Layout ---------------------------------------------------------------
   const panes = () => page.evaluate(() => [...document.querySelectorAll('.lesson-pane, .repl-pane')]
     .map((e) => Math.round(e.getBoundingClientRect().width)));

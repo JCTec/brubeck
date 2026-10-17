@@ -37,6 +37,12 @@ function row(index, value, changed) {
     cell.textContent = text;
     tr.append(cell);
   }
+  if (changed) {
+    const note = document.createElement('span');
+    note.className = 'sr-only';
+    note.textContent = ' (changed)';
+    tr.lastElementChild?.append(note);
+  }
   return tr;
 }
 

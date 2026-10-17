@@ -103,7 +103,7 @@ export function destinationRegister(line) {
  * @param {string} text
  * @returns {number | null}
  */
-function parseAddress(text) {
+export function parseAddress(text) {
   const value = /^0x[0-9a-f]+$/i.test(text) ? Number.parseInt(text, 16)
     : /^\d+$/.test(text) ? Number(text) : Number.NaN;
   return Number.isSafeInteger(value) && value >= 0 && value <= 0xffffffff ? value : null;
