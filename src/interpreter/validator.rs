@@ -37,9 +37,9 @@ pub fn validate_argument_count(
 /// * `max` - Maximum allowed value (inclusive)
 pub fn validate_immediate_range(
     instruction: &str,
-    value: i32,
-    min: i32,
-    max: i32,
+    value: i64,
+    min: i64,
+    max: i64,
 ) -> Result<(), Error> {
     if value < min || value > max {
         Err(Error::ImmediateOutOfRange {

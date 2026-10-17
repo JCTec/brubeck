@@ -155,7 +155,7 @@ pub fn normalize(input: &str) -> Vec<String> {
 /// - **Instruction**: RISC-V mnemonics (ADD, LW, JAL, etc.)
 /// - **PseudoInstruction**: Common shortcuts (MV, LI, RET, etc.)
 /// - **Register**: Register names (X0-X31, ABI names like SP, RA)
-/// - **Value32**: Immediate values (decimal, hex, binary)
+/// - **Value**: Immediate values (decimal, hex, binary)
 /// - **OffsetRegister**: Load/store notation like `4(X2)`
 ///
 /// # Educational Notes
@@ -242,9 +242,11 @@ pub fn parse_single_token(input: String) -> Result<Token, Error> {
                 let reg_str = &input[paren_pos + 1..close_paren];
 
                 // Parse the offset value
-                let offset = parse_number(offset_str).map_err(|e| {
-                    Error::Generic(format!("Invalid offset value '{offset_str}': {e}"))
-                })?;
+                let offset = parse_number(offset_str)
+                    .and_then(|v| i32::try_from(v).map_err(|_| "out of range".to_string()))
+                    .map_err(|e| {
+                        Error::Generic(format!("Invalid offset value '{offset_str}': {e}"))
+                    })?;
 
                 // Parse the register
                 let register = parse_register(reg_str).ok_or_else(|| {
@@ -267,7 +269,7 @@ pub fn parse_single_token(input: String) -> Result<Token, Error> {
 
     // Try to parse as CSR name
     if let Some(csr_addr) = parse_csr_name(&input) {
-        return Ok(Token::Value32(csr_addr));
+        return Ok(Token::Value(csr_addr.into()));
     }
 
     // Try to parse as register (both Xn and ABI names)
@@ -331,7 +333,7 @@ pub fn create_command_from_tokens(tokens: &mut Vec<Token>) -> Result<Command, Er
         ))),
 
         // Raw number without context = error (user probably meant something else)
-        Token::Value32(value) => Err(Error::Generic(format!("Value: {value}"))),
+        Token::Value(value) => Err(Error::Generic(format!("Value: {value}"))),
 
         // Hardware instruction = build and validate the full instruction
         Token::Instruction(mut i) => {
@@ -375,11 +377,14 @@ pub fn create_command_from_tokens(tokens: &mut Vec<Token>) -> Result<Command, Er
 /// - Sign extension for immediate values
 pub fn parse_value_or_offset(input: String) -> Result<Token, Error> {
     parse_number(&input)
-        .map(Token::Value32)
+        .map(Token::Value)
         .map_err(|e| Error::Generic(format!("Invalid immediate value '{input}': {e}")))
 }
 
-/// Parses a string into a signed 32-bit integer.
+/// Parses a string into an integer that fits in 32 bits, signed or unsigned.
+///
+/// The result spans `i32::MIN..=u32::MAX`, so `0xDEADBEEF` keeps its value;
+/// each instruction then checks its own immediate range.
 ///
 /// # Format Detection
 ///
@@ -394,22 +399,39 @@ pub fn parse_value_or_offset(input: String) -> Result<Token, Error> {
 /// - `"0b1010"` → 10
 /// - `"-100"` → -100
 /// - `"0xFFFF"` → 65535 (not sign-extended here)
-pub fn parse_number(input: &str) -> Result<i32, String> {
+/// - `"0xFFFFFFFF"` → 4294967295 (not -1)
+pub fn parse_number(input: &str) -> Result<i64, String> {
     let input = input.trim();
+    // A leading minus applies to every base, e.g. `-0x10`.
+    let (negative, digits) = match input.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, input),
+    };
 
-    if input.starts_with("0x") || input.starts_with("0X") {
+    let magnitude = if digits.starts_with("0x") || digits.starts_with("0X") {
         // Hexadecimal
-        i32::from_str_radix(&input[2..], 16)
-            .map_err(|_| format!("Invalid hexadecimal number: {input}"))
-    } else if input.starts_with("0b") || input.starts_with("0B") {
+        i64::from_str_radix(&digits[2..], 16)
+            .map_err(|_| format!("Invalid hexadecimal number: {input}"))?
+    } else if digits.starts_with("0b") || digits.starts_with("0B") {
         // Binary
-        i32::from_str_radix(&input[2..], 2).map_err(|_| format!("Invalid binary number: {input}"))
+        i64::from_str_radix(&digits[2..], 2)
+            .map_err(|_| format!("Invalid binary number: {input}"))?
     } else {
         // Decimal
-        input
-            .parse::<i32>()
-            .map_err(|_| format!("Invalid decimal number: {input}"))
+        digits
+            .parse::<i64>()
+            .map_err(|_| format!("Invalid decimal number: {input}"))?
+    };
+    // `parse` above accepts a sign, so "--5" and "-+5" would slip through.
+    if negative && digits.starts_with(['-', '+']) {
+        return Err(format!("Invalid number: {input}"));
     }
+    let value = if negative { -magnitude } else { magnitude };
+
+    if value < i32::MIN.into() || value > u32::MAX.into() {
+        return Err(format!("{input} does not fit in 32 bits"));
+    }
+    Ok(value)
 }
 
 /// Parses a string as an instruction mnemonic or pseudo-instruction.

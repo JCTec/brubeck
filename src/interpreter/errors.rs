@@ -26,7 +26,7 @@ pub enum ParseError {
     /// Immediate value out of valid range
     ImmediateOutOfRange {
         instruction: String,
-        value: i32,
+        value: i64,
         min: i32,
         max: i32,
     },
