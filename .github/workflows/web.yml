@@ -2,7 +2,7 @@ name: CI & Pages
 
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -21,7 +21,7 @@ jobs:
     name: Check, test and build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -53,7 +53,7 @@ jobs:
         run: wasm-pack build crates/brubeck-wasm --release --target web --out-dir ../../web/pkg
 
       # --- JavaScript: strict type-check of the JSDoc against the generated .d.ts
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Install web tooling
@@ -80,9 +80,8 @@ jobs:
           mkdir -p _site
           cp -r web/index.html web/css web/js web/pkg web/docs _site/
           rm -f _site/pkg/.gitignore
-          touch _site/.nojekyll
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
 
@@ -99,4 +98,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
