@@ -7,6 +7,8 @@
 //! stored in memory as `[0xab, 0x12]`.
 
 use super::*;
+use std::collections::BTreeMap;
+use std::ops::Range;
 
 // Standard CSR addresses
 const CSR_CYCLE: u16 = 0xC00; // Cycle counter (read-only)
@@ -100,6 +102,64 @@ impl StateDelta {
                 .map(|(addr, _old, new)| (*addr, *new))
                 .collect(),
             pc_change: Some(self.pc_change.1),
+        }
+    }
+}
+
+impl StateDelta {
+    /// Combines this delta with `later`, a delta recorded immediately after it,
+    /// into one delta describing the net change of both.
+    ///
+    /// For every register, CSR and memory byte, the merged delta keeps the
+    /// value before `self` and the value after `later`; anything that ends up
+    /// back at its original value is dropped. Used to make a pseudo-instruction
+    /// that expands to several instructions (such as `LI`) a single step.
+    pub fn merge(self, later: StateDelta) -> StateDelta {
+        fn merge_values<K: PartialEq + Copy>(
+            earlier: Vec<(K, u32, u32)>,
+            later: Vec<(K, u32, u32)>,
+        ) -> Vec<(K, u32, u32)> {
+            let mut merged = earlier;
+            for (key, old, new) in later {
+                match merged.iter_mut().find(|(k, _, _)| *k == key) {
+                    Some(entry) => entry.2 = new,
+                    None => merged.push((key, old, new)),
+                }
+            }
+            merged.retain(|(_, old, new)| old != new);
+            merged
+        }
+
+        // Memory is merged per byte, then coalesced back into contiguous runs.
+        let mut bytes: BTreeMap<u32, (u8, u8)> = BTreeMap::new();
+        for change in self.memory_changes.into_iter().chain(later.memory_changes) {
+            for (offset, (&old, &new)) in change.old_data.iter().zip(&change.new_data).enumerate() {
+                bytes
+                    .entry(change.addr.wrapping_add(offset as u32))
+                    .and_modify(|entry| entry.1 = new)
+                    .or_insert((old, new));
+            }
+        }
+        let mut memory_changes: Vec<MemoryDelta> = Vec::new();
+        for (addr, (old, new)) in bytes.into_iter().filter(|(_, (old, new))| old != new) {
+            match memory_changes.last_mut() {
+                Some(run) if run.addr.wrapping_add(run.new_data.len() as u32) == addr => {
+                    run.old_data.push(old);
+                    run.new_data.push(new);
+                }
+                _ => memory_changes.push(MemoryDelta {
+                    addr,
+                    old_data: vec![old],
+                    new_data: vec![new],
+                }),
+            }
+        }
+
+        StateDelta {
+            register_changes: merge_values(self.register_changes, later.register_changes),
+            memory_changes,
+            csr_changes: merge_values(self.csr_changes, later.csr_changes),
+            pc_change: (self.pc_change.0, later.pc_change.1),
         }
     }
 }
@@ -486,6 +546,11 @@ impl CPU {
                     "CSR address 0x{addr:03x} does not exist"
                 )));
             }
+            if self.csr_readonly[addr as usize] {
+                return Err(CPUError::IllegalInstruction(format!(
+                    "CSR address 0x{addr:03x} is read-only"
+                )));
+            }
         }
 
         // All validations passed, now apply changes atomically
@@ -569,21 +634,30 @@ impl CPU {
     /// # Ok::<(), brubeck::rv32_i::CPUError>(())
     /// ```
     pub fn execute(&mut self, instruction: Instruction) -> Result<StateDelta, CPUError> {
-        // Capture state before execution
+        // Capture state before execution. Memory is not snapshotted: stores
+        // report the bytes they change, keeping each step independent of the
+        // memory size.
         let old_pc = self.pc;
         let old_registers = self.get_all_registers_internal();
-        let old_memory = self.memory.clone(); // This is expensive but simple for now
         let old_csrs = self.csrs;
 
-        // Execute the instruction using the existing logic
-        let result = self.execute_internal(instruction);
+        let mut memory_changes = Vec::new();
+        if let Err(error) = self.execute_internal(instruction, &mut memory_changes) {
+            // Some instructions (e.g. CSRRS on a read-only CSR) write rd before
+            // they fault. Restore the snapshot so a failed instruction never
+            // leaves partial changes behind. Memory needs no restore: stores
+            // bounds-check before writing and are the last thing they do.
+            for (i, &value) in old_registers.iter().enumerate() {
+                self.set_register_direct(Register::from_u32(i as u32), value);
+            }
+            self.csrs = old_csrs;
+            self.pc = old_pc;
+            return Err(error);
+        }
 
-        // If execution failed, don't return a delta
-        result?;
-
-        // Capture state after execution and build delta
         let mut delta = StateDelta::new();
         delta.pc_change = (old_pc, self.pc);
+        delta.memory_changes = memory_changes;
 
         // Track register changes
         let new_registers = self.get_all_registers_internal();
@@ -593,17 +667,6 @@ impl CPU {
                 delta
                     .register_changes
                     .push((Register::from_u32(i as u32), old_val, new_val));
-            }
-        }
-
-        // Track memory changes (simplified - this could be optimized)
-        for (i, (&old_byte, &new_byte)) in old_memory.iter().zip(self.memory.iter()).enumerate() {
-            if old_byte != new_byte {
-                delta.memory_changes.push(MemoryDelta {
-                    addr: i as u32,
-                    old_data: vec![old_byte],
-                    new_data: vec![new_byte],
-                });
             }
         }
 
@@ -617,8 +680,13 @@ impl CPU {
         Ok(delta)
     }
 
-    /// Internal execute method (renamed from the original execute)
-    fn execute_internal(&mut self, instruction: Instruction) -> Result<(), CPUError> {
+    /// Dispatches one instruction. Stores append the bytes they change to
+    /// `memory_changes`; everything else leaves it untouched.
+    fn execute_internal(
+        &mut self,
+        instruction: Instruction,
+        memory_changes: &mut Vec<MemoryDelta>,
+    ) -> Result<(), CPUError> {
         match instruction {
             Instruction::ADD(i) => self.rv32i_add(i),
             Instruction::ADDI(i) => self.rv32i_addi(i),
@@ -642,8 +710,8 @@ impl CPU {
             Instruction::NOP => self.rv32i_nop(),
             Instruction::OR(i) => self.rv32i_or(i),
             Instruction::ORI(i) => self.rv32i_ori(i),
-            Instruction::SB(i) => self.rv32i_sb(i),
-            Instruction::SH(i) => self.rv32i_sh(i),
+            Instruction::SB(i) => self.rv32i_sb(i, memory_changes),
+            Instruction::SH(i) => self.rv32i_sh(i, memory_changes),
             Instruction::SLL(i) => self.rv32i_sll(i),
             Instruction::SLLI(i) => self.rv32i_slli(i),
             Instruction::SLT(i) => self.rv32i_slt(i),
@@ -655,7 +723,7 @@ impl CPU {
             Instruction::SRL(i) => self.rv32i_srl(i),
             Instruction::SRLI(i) => self.rv32i_srli(i),
             Instruction::SUB(i) => self.rv32i_sub(i),
-            Instruction::SW(i) => self.rv32i_sw(i),
+            Instruction::SW(i) => self.rv32i_sw(i, memory_changes),
             Instruction::XOR(i) => self.rv32i_xor(i),
             Instruction::XORI(i) => self.rv32i_xori(i),
             Instruction::FENCE(_) => self.rv32i_fence(),
@@ -681,7 +749,7 @@ impl CPU {
      */
 
     fn increment_pc(&mut self) -> Result<(), CPUError> {
-        self.pc += Instruction::LENGTH;
+        self.pc = self.pc.wrapping_add(Instruction::LENGTH);
         Ok(())
     }
 
@@ -808,7 +876,7 @@ impl CPU {
         let mut imm = instruction.imm.as_u32();
         imm <<= 12;
         let pc = self.pc;
-        let value = imm + pc;
+        let value = imm.wrapping_add(pc);
         self.set_register(instruction.rd, value);
 
         self.increment_pc()
@@ -998,7 +1066,7 @@ impl CPU {
         let offset_address = self.pc.wrapping_add(offset);
 
         // validate the offset address is 32-bit aligned
-        if offset_address % 4 != 0 {
+        if !offset_address.is_multiple_of(4) {
             return Err(CPUError::MisalignedJump(offset_address));
         }
 
@@ -1029,7 +1097,7 @@ impl CPU {
         offset_address <<= 1;
 
         // validate the offset address is 32-bit aligned
-        if offset_address % 4 != 0 {
+        if !offset_address.is_multiple_of(4) {
             return Err(CPUError::MisalignedJump(offset_address));
         }
 
@@ -1049,33 +1117,13 @@ impl CPU {
     /// BEQ and BNE take the branch if registers rs1 and rs2 are equal or
     /// unequal respectively.
     fn rv32i_beq(&mut self, instruction: BType) -> Result<(), CPUError> {
-        let rs1 = self.get_register(instruction.rs1);
-        let rs2 = self.get_register(instruction.rs2);
-
-        if rs1 == rs2 {
-            let mut offset = instruction.imm.as_u32();
-            offset <<= 1; // multiple of 2
-            self.pc = self.pc.wrapping_add(offset);
-        } else {
-            self.pc += Instruction::LENGTH;
-        }
-
-        Ok(())
+        let taken = self.get_register(instruction.rs1) == self.get_register(instruction.rs2);
+        self.branch(taken, &instruction)
     }
 
     fn rv32i_bne(&mut self, instruction: BType) -> Result<(), CPUError> {
-        let rs1 = self.get_register(instruction.rs1);
-        let rs2 = self.get_register(instruction.rs2);
-
-        if rs1 != rs2 {
-            let mut offset = instruction.imm.as_u32();
-            offset <<= 1; // multiple of 2
-            self.pc = self.pc.wrapping_add(offset);
-        } else {
-            self.pc += Instruction::LENGTH;
-        }
-
-        Ok(())
+        let taken = self.get_register(instruction.rs1) != self.get_register(instruction.rs2);
+        self.branch(taken, &instruction)
     }
 
     ///  BLT and BLTU take the branch if rs1 is less than rs2, using signed
@@ -1083,31 +1131,12 @@ impl CPU {
     fn rv32i_blt(&mut self, instruction: BType) -> Result<(), CPUError> {
         let rs1 = self.get_register(instruction.rs1) as i32;
         let rs2 = self.get_register(instruction.rs2) as i32;
-
-        if rs1 < rs2 {
-            let mut offset = instruction.imm.as_u32();
-            offset <<= 1; // multiple of 2
-            self.pc = self.pc.wrapping_add(offset);
-        } else {
-            self.pc += Instruction::LENGTH;
-        }
-
-        Ok(())
+        self.branch(rs1 < rs2, &instruction)
     }
 
     fn rv32i_bltu(&mut self, instruction: BType) -> Result<(), CPUError> {
-        let rs1 = self.get_register(instruction.rs1);
-        let rs2 = self.get_register(instruction.rs2);
-
-        if rs1 < rs2 {
-            let mut offset = instruction.imm.as_u32();
-            offset <<= 1; // multiple of 2
-            self.pc = self.pc.wrapping_add(offset);
-        } else {
-            self.pc += Instruction::LENGTH;
-        }
-
-        Ok(())
+        let taken = self.get_register(instruction.rs1) < self.get_register(instruction.rs2);
+        self.branch(taken, &instruction)
     }
 
     ///  BGE and BGEU take the branch if rs1 is greater than or equal to rs2,
@@ -1115,30 +1144,27 @@ impl CPU {
     fn rv32i_bge(&mut self, instruction: BType) -> Result<(), CPUError> {
         let rs1 = self.get_register(instruction.rs1) as i32;
         let rs2 = self.get_register(instruction.rs2) as i32;
-
-        if rs1 >= rs2 {
-            let mut offset = instruction.imm.as_u32();
-            offset <<= 1; // multiple of 2
-            self.pc = self.pc.wrapping_add(offset);
-        } else {
-            self.pc += Instruction::LENGTH;
-        }
-
-        Ok(())
+        self.branch(rs1 >= rs2, &instruction)
     }
 
     fn rv32i_bgeu(&mut self, instruction: BType) -> Result<(), CPUError> {
-        let rs1 = self.get_register(instruction.rs1);
-        let rs2 = self.get_register(instruction.rs2);
+        let taken = self.get_register(instruction.rs1) >= self.get_register(instruction.rs2);
+        self.branch(taken, &instruction)
+    }
 
-        if rs1 >= rs2 {
-            let mut offset = instruction.imm.as_u32();
-            offset <<= 1; // multiple of 2
-            self.pc = self.pc.wrapping_add(offset);
-        } else {
-            self.pc += Instruction::LENGTH;
+    /// Shared tail of every conditional branch. A taken branch moves the PC by
+    /// the B-immediate (in multiples of 2 bytes); a target that is not 4-byte
+    /// aligned raises an instruction-address-misaligned exception and leaves
+    /// the PC unchanged. A branch that is not taken never faults.
+    fn branch(&mut self, taken: bool, instruction: &BType) -> Result<(), CPUError> {
+        if !taken {
+            return self.increment_pc();
         }
-
+        let target = self.pc.wrapping_add(instruction.imm.as_u32() << 1);
+        if !target.is_multiple_of(4) {
+            return Err(CPUError::MisalignedJump(target));
+        }
+        self.pc = target;
         Ok(())
     }
 
@@ -1148,22 +1174,31 @@ impl CPU {
     /// sign-extended 12-bit offset. Loads copy a value from memory to register
     /// rd. Stores copy the value in register rs2 to memory
     ///
+    /// Returns the memory range for a `width`-byte access at `address`, or an
+    /// access violation (carrying the effective address) if any byte of the
+    /// access falls outside memory.
+    fn memory_range(&self, address: u32, width: usize) -> Result<Range<usize>, CPUError> {
+        let start = address as usize;
+        match start.checked_add(width) {
+            Some(end) if end <= self.memory.len() => Ok(start..end),
+            _ => Err(CPUError::AccessViolation(address)),
+        }
+    }
+
+    /// Reads `N` little-endian bytes from the effective address `rs1 + imm`.
+    fn load_bytes<const N: usize>(&self, instruction: &IType) -> Result<[u8; N], CPUError> {
+        let address = self
+            .get_register(instruction.rs1)
+            .wrapping_add(instruction.imm.as_u32());
+        let range = self.memory_range(address, N)?;
+        let mut bytes = [0u8; N];
+        bytes.copy_from_slice(&self.memory[range]);
+        Ok(bytes)
+    }
+
     /// The LW instruction loads a 32-bit value from memory into rd.
     fn rv32i_lw(&mut self, instruction: IType) -> Result<(), CPUError> {
-        let rs1 = self.get_register(instruction.rs1);
-        let imm = instruction.imm.as_u32();
-
-        let offset = rs1.wrapping_add(imm);
-        let index = offset as usize;
-
-        if index >= self.memory.len() {
-            return Err(CPUError::AccessViolation(rs1));
-        }
-
-        let mut value_buf = [0u8; 4];
-        value_buf.clone_from_slice(&self.memory[index..index + 4]);
-        let value = u32::from_le_bytes(value_buf);
-
+        let value = u32::from_le_bytes(self.load_bytes::<4>(&instruction)?);
         self.set_register(instruction.rd, value);
         self.increment_pc()
     }
@@ -1171,126 +1206,88 @@ impl CPU {
     /// LH loads a 16-bit value from memory, then sign-extends to 32-bits before
     /// storing in rd.
     fn rv32i_lh(&mut self, instruction: IType) -> Result<(), CPUError> {
-        let rs1 = self.get_register(instruction.rs1);
-        let imm = instruction.imm.as_u32();
-
-        let offset = rs1.wrapping_add(imm);
-        let index = offset as usize;
-
-        if index >= self.memory.len() {
-            return Err(CPUError::AccessViolation(rs1));
-        }
-
-        let mut value_buf = [0u8; 2];
-        value_buf.clone_from_slice(&self.memory[index..index + 2]);
-        let u16_value = u16::from_le_bytes(value_buf);
-        // Sign-extend from 16-bit to 32-bit
-        let value = u16_value as i16 as i32 as u32;
-
-        self.set_register(instruction.rd, value);
+        let value = i16::from_le_bytes(self.load_bytes::<2>(&instruction)?);
+        self.set_register(instruction.rd, i32::from(value) as u32);
         self.increment_pc()
     }
 
     /// LHU loads a 16-bit value from memory but then zero extends to 32-bits
     /// before storing in rd.
     fn rv32i_lhu(&mut self, instruction: IType) -> Result<(), CPUError> {
-        let rs1 = self.get_register(instruction.rs1);
-        let imm = instruction.imm.as_u32();
-
-        let offset = rs1.wrapping_add(imm);
-        let index = offset as usize;
-
-        if index >= self.memory.len() {
-            return Err(CPUError::AccessViolation(rs1));
-        }
-
-        let mut value_buf = [0u8; 2];
-        value_buf.clone_from_slice(&self.memory[index..index + 2]);
-        let u16_value = u16::from_le_bytes(value_buf);
-
-        let value = u16_value as u32;
-
-        self.set_register(instruction.rd, value);
+        let value = u16::from_le_bytes(self.load_bytes::<2>(&instruction)?);
+        self.set_register(instruction.rd, u32::from(value));
         self.increment_pc()
     }
 
     /// LB loads a 8-bit value from memory, then sign-extends to 32-bits before
     /// storing in rd.
     fn rv32i_lb(&mut self, instruction: IType) -> Result<(), CPUError> {
-        let rs1 = self.get_register(instruction.rs1);
-        let imm = instruction.imm.as_u32();
-
-        let offset = rs1.wrapping_add(imm);
-        let index = offset as usize;
-
-        if index >= self.memory.len() {
-            return Err(CPUError::AccessViolation(rs1));
-        }
-
-        let u8_value = self.memory[index];
-        // Sign-extend from 8-bit to 32-bit
-        let value = u8_value as i8 as i32 as u32;
-
-        self.set_register(instruction.rd, value);
+        let value = i8::from_le_bytes(self.load_bytes::<1>(&instruction)?);
+        self.set_register(instruction.rd, i32::from(value) as u32);
         self.increment_pc()
     }
 
     /// LBU loads a 8-bit value from memory but then zero extends to 32-bits
     /// before storing in rd.
     fn rv32i_lbu(&mut self, instruction: IType) -> Result<(), CPUError> {
-        let rs1 = self.get_register(instruction.rs1);
-        let imm = instruction.imm.as_u32();
-
-        let offset = rs1.wrapping_add(imm);
-        let index = offset as usize;
-
-        if index >= self.memory.len() {
-            return Err(CPUError::AccessViolation(rs1));
-        }
-
-        let u8_value = self.memory[index];
-        let value = u8_value as u32;
-
-        self.set_register(instruction.rd, value);
+        let value = u8::from_le_bytes(self.load_bytes::<1>(&instruction)?);
+        self.set_register(instruction.rd, u32::from(value));
         self.increment_pc()
     }
 
     /// The SW, SH, and SB instructions store 32-bit, 16-bit, and 8-bit values
     /// from the low bits of register rs2 to memory
-    fn rv32i_sw(&mut self, instruction: SType) -> Result<(), CPUError> {
-        self.store(instruction, 4)?;
+    fn rv32i_sw(
+        &mut self,
+        instruction: SType,
+        changes: &mut Vec<MemoryDelta>,
+    ) -> Result<(), CPUError> {
+        self.store(instruction, 4, changes)?;
         self.increment_pc()
     }
 
-    fn rv32i_sh(&mut self, instruction: SType) -> Result<(), CPUError> {
-        self.store(instruction, 2)?;
+    fn rv32i_sh(
+        &mut self,
+        instruction: SType,
+        changes: &mut Vec<MemoryDelta>,
+    ) -> Result<(), CPUError> {
+        self.store(instruction, 2, changes)?;
         self.increment_pc()
     }
 
-    fn rv32i_sb(&mut self, instruction: SType) -> Result<(), CPUError> {
-        self.store(instruction, 1)?;
+    fn rv32i_sb(
+        &mut self,
+        instruction: SType,
+        changes: &mut Vec<MemoryDelta>,
+    ) -> Result<(), CPUError> {
+        self.store(instruction, 1, changes)?;
         self.increment_pc()
     }
 
-    fn store(&mut self, instruction: SType, bytes: usize) -> Result<(), CPUError> {
-        let base = self.get_register(instruction.rs1);
-        let src = self.get_register(instruction.rs2);
-        let imm = instruction.imm.as_u32();
-
-        let address = base.wrapping_add(imm);
-        let mut index = address as usize;
-
-        if index >= self.memory.len() {
-            return Err(CPUError::AccessViolation(address));
-        }
-
-        for (byte_index, byte) in src.to_le_bytes().into_iter().enumerate() {
-            if byte_index < bytes {
-                self.memory[index] = byte;
-                index += 1;
+    /// Writes the low `width` bytes of rs2 to `rs1 + imm`. The whole access is
+    /// bounds-checked first, so a failing store never writes partially. Each
+    /// byte whose value actually changes is appended to `changes`.
+    fn store(
+        &mut self,
+        instruction: SType,
+        width: usize,
+        changes: &mut Vec<MemoryDelta>,
+    ) -> Result<(), CPUError> {
+        let address = self
+            .get_register(instruction.rs1)
+            .wrapping_add(instruction.imm.as_u32());
+        let range = self.memory_range(address, width)?;
+        let src = self.get_register(instruction.rs2).to_le_bytes();
+        for (offset, (slot, &new)) in self.memory[range].iter_mut().zip(&src[..width]).enumerate() {
+            if *slot != new {
+                changes.push(MemoryDelta {
+                    addr: address.wrapping_add(offset as u32),
+                    old_data: vec![*slot],
+                    new_data: vec![new],
+                });
+                *slot = new;
             }
         }
-
         Ok(())
     }
 
@@ -1376,7 +1373,7 @@ impl CPU {
             self.set_register(instruction.rd, old_value);
         }
 
-        Ok(())
+        self.increment_pc()
     }
 
     /// CSRRS (Atomic Read and Set Bits in CSR)
@@ -1415,7 +1412,7 @@ impl CPU {
             self.write_csr(csr_addr, new_value)?;
         }
 
-        Ok(())
+        self.increment_pc()
     }
 
     /// CSRRC (Atomic Read and Clear Bits in CSR)
@@ -1454,7 +1451,7 @@ impl CPU {
             self.write_csr(csr_addr, new_value)?;
         }
 
-        Ok(())
+        self.increment_pc()
     }
 
     /// CSRRWI (Atomic Read/Write CSR Immediate)
@@ -1498,7 +1495,7 @@ impl CPU {
             self.set_register(instruction.rd, old_value);
         }
 
-        Ok(())
+        self.increment_pc()
     }
 
     /// CSRRSI (Atomic Read and Set Bits in CSR Immediate)
@@ -1538,7 +1535,7 @@ impl CPU {
             self.write_csr(csr_addr, new_value)?;
         }
 
-        Ok(())
+        self.increment_pc()
     }
 
     /// CSRRCI (Atomic Read and Clear Bits in CSR Immediate)
@@ -1578,7 +1575,7 @@ impl CPU {
             self.write_csr(csr_addr, new_value)?;
         }
 
-        Ok(())
+        self.increment_pc()
     }
 }
 

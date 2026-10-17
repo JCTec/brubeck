@@ -55,6 +55,17 @@ impl StateHistory {
         }
     }
 
+    /// Number of entries before the current position (how many steps back
+    /// are available).
+    pub fn position(&self) -> usize {
+        self.current_position
+    }
+
+    /// Total number of recorded entries.
+    pub fn len(&self) -> usize {
+        self.deltas.len()
+    }
+
     pub fn clear(&mut self) {
         self.deltas.clear();
         self.current_position = 0;

@@ -315,11 +315,11 @@ fn test_all_pseudo_instructions() {
 #[test]
 fn test_li_large_values() {
     let mut ctx = test_ctx("test_li_large_values");
-    // Test LI with values requiring LUI + ADDI
+    // LI with a value requiring LUI + ADDI is still a single history entry
     ctx.exec("LI x1, 0x12345678")
-        .previous_expect("LI") // This undoes the ADDI part
-        .previous() // This undoes the LUI part
-        .check_reg("x1", "0x00000000");
+        .previous_expect("LI") // Steps back over both LUI and ADDI
+        .check_reg("x1", "0x00000000")
+        .previous_should_fail();
 }
 
 // ==================== COMPLEX SCENARIOS ====================

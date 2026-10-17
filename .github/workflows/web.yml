@@ -1,0 +1,101 @@
+name: CI & Pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Check, test and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+
+      # --- Rust: the project's own quality gate, across the workspace -------
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+
+      # --- The library must stay dependency-free and wasm-compatible --------
+      - name: Library builds without the CLI feature
+        run: cargo build --lib --no-default-features
+      - name: Library builds for wasm32
+        run: cargo build --lib --no-default-features --target wasm32-unknown-unknown
+
+      # --- WebAssembly package ----------------------------------------------
+      - name: Build wasm package
+        run: wasm-pack build crates/brubeck-wasm --release --target web --out-dir ../../web/pkg
+
+      # --- JavaScript: strict type-check of the JSDoc against the generated .d.ts
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install web tooling
+        working-directory: web
+        run: npm ci --no-audit --no-fund
+      - name: Type-check JavaScript
+        working-directory: web
+        run: npm run typecheck
+      - name: End-to-end test
+        working-directory: web
+        run: npx playwright install --with-deps chromium && npm run test:e2e
+
+      # --- Docs and site bundle ---------------------------------------------
+      - name: JavaScript API docs
+        working-directory: web
+        run: npm run docs
+      - name: Rust API docs
+        run: |
+          cargo doc --no-deps --no-default-features -p brubeck
+          mkdir -p web/docs/rust
+          cp -r target/doc/. web/docs/rust/
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          cp -r web/index.html web/css web/js web/pkg web/docs _site/
+          rm -f _site/pkg/.gitignore
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

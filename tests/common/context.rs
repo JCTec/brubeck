@@ -171,6 +171,7 @@ impl TestContext<Interpreter> {
     }
 
     /// Navigate to next state
+    #[allow(clippy::should_implement_trait)] // Builder-style test DSL, not an iterator
     pub fn next(&mut self) -> &mut Self {
         let ctx = self.context("Next");
         self.inner

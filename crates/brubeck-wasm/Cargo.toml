@@ -1,0 +1,19 @@
+[package]
+name = "brubeck-wasm"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "WebAssembly bindings for the Brubeck RV32I emulator"
+repository = "https://github.com/JCTec/brubeck"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The pure emulator library, without the terminal REPL's dependencies.
+brubeck = { path = "../..", default-features = false }
+wasm-bindgen = "0.2"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-Oz"]

@@ -1,0 +1,10 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "name": "Brubeck Lab JavaScript API",
+  "tsconfig": "jsconfig.json",
+  "entryPointStrategy": "expand",
+  "entryPoints": ["js"],
+  "out": "docs/js",
+  "readme": "README.md",
+  "treatWarningsAsErrors": true
+}
