@@ -117,12 +117,10 @@ pub fn read_line_with_history(prompt: &str, history: &mut CommandHistory) -> io:
                             }
                         }
                     }
-                    KeyCode::Esc => {
-                        if history.is_navigating() {
-                            input = history.cancel_navigation().to_string();
-                            cursor_position = input.len();
-                            refresh_line(prompt, &input, cursor_position)?;
-                        }
+                    KeyCode::Esc if history.is_navigating() => {
+                        input = history.cancel_navigation().to_string();
+                        cursor_position = input.len();
+                        refresh_line(prompt, &input, cursor_position)?;
                     }
                     _ => {} // Ignore other keys
                 }

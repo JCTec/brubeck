@@ -37,12 +37,9 @@ pub fn format_io_error(error: &io::Error, context: &str, tips_enabled: bool) -> 
             io::ErrorKind::PermissionDenied => {
                 output.push_str("\n💡 Tip: Check that you have permission to read the file");
             }
-            io::ErrorKind::InvalidInput => {
-                if context.contains("memory") {
-                    output.push_str(
-                        "\n💡 Tip: Valid memory sizes: 1M, 256k, 4096. Use suffixes k/K/m/M",
-                    );
-                }
+            io::ErrorKind::InvalidInput if context.contains("memory") => {
+                output
+                    .push_str("\n💡 Tip: Valid memory sizes: 1M, 256k, 4096. Use suffixes k/K/m/M");
             }
             _ => {}
         }
