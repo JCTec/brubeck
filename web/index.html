@@ -41,6 +41,12 @@
           <button type="button" class="link-button" id="hint-toggle" aria-expanded="false" aria-controls="hint">Show hint</button>
           <p class="hint" id="hint" hidden></p>
         </section>
+
+        <p class="colophon">
+          Brubeck is by <a href="https://github.com/peat/brubeck">Peat Bakke</a> (Apache-2.0);
+          this lab is <a href="https://github.com/JCTec/brubeck">a fork</a>.
+          API docs: <a href="docs/js/">JavaScript</a> · <a href="docs/rust/brubeck/">Rust</a>.
+        </p>
       </article>
 
       <footer class="step-nav">
@@ -52,23 +58,45 @@
     <section class="repl-pane" aria-label="REPL">
       <div class="repl-bar">
         <span class="repl-title">REPL</span>
-        <span class="history-pill" id="history">History 0 / 0</span>
+        <label class="history-pill" id="history" for="scrubber">History 0 / 0</label>
+        <input type="range" class="scrubber" id="scrubber" min="0" max="0" value="0" step="1"
+               aria-label="History position" aria-valuetext="0 of 0" disabled>
         <div class="repl-actions">
           <button type="button" class="link-button" id="btn-prev" aria-label="Previous state (/p)">← /p</button>
           <button type="button" class="link-button" id="btn-next" aria-label="Next state (/n)">/n →</button>
           <button type="button" class="link-button strong" id="btn-reset">/reset</button>
           <button type="button" class="link-button strong" id="btn-clear">Clear</button>
+          <button type="button" class="link-button strong" id="btn-share"
+                  aria-label="Share: copy a link that replays this session">Share</button>
         </div>
       </div>
 
-      <div class="registers" id="registers-panel" tabindex="0" role="region" aria-label="Registers">
+      <div class="registers" id="registers-panel" tabindex="0" role="region" aria-label="Machine state">
         <div class="registers-head">
-          <span class="registers-title">Registers</span>
+          <div class="view-tabs" role="tablist" aria-label="Show">
+            <button type="button" class="view-tab" role="tab" id="tab-registers"
+                    aria-selected="true" aria-controls="view-registers">Registers</button>
+            <span class="view-sep" aria-hidden="true">|</span>
+            <button type="button" class="view-tab" role="tab" id="tab-memory"
+                    aria-selected="false" aria-controls="view-memory" tabindex="-1">Memory</button>
+          </div>
           <span class="pc-label">pc</span>
           <span class="pc-value" id="pc-value">0x00000000</span>
         </div>
-        <p class="registers-caption">Hex · highlighted = changed by last instruction</p>
-        <div id="registers" class="register-groups" role="table" aria-label="Register values"></div>
+        <div id="view-registers" role="tabpanel" aria-labelledby="tab-registers">
+          <p class="registers-caption">Hex · highlighted = changed by last instruction</p>
+          <div id="registers" class="register-groups" role="table" aria-label="Register values"></div>
+        </div>
+        <div id="view-memory" role="tabpanel" aria-labelledby="tab-memory" hidden>
+          <div class="memory-controls">
+            <label for="mem-addr">Address</label>
+            <input id="mem-addr" class="mem-addr" spellcheck="false" autocomplete="off" autocapitalize="off"
+                   aria-describedby="mem-addr-help">
+            <span id="mem-addr-help" class="mem-addr-help">Hex or decimal. Empty follows the last write.</span>
+          </div>
+          <p class="registers-caption">Hex · highlighted = changed by last step</p>
+          <div id="memory" class="memory-grid" role="table" aria-label="Memory bytes"></div>
+        </div>
       </div>
 
       <div class="terminal" id="terminal">

@@ -271,6 +271,19 @@ export class Emulator {
     return this.#call((raw) => toDelta(raw.next()));
   }
 
+  /**
+   * Moves to any point in history in one call: 0 is before the first step,
+   * `history.length` the latest state. Equivalent to calling
+   * {@link Emulator#previous} or {@link Emulator#next} repeatedly.
+   * @param {number} position
+   * @returns {StateDelta} The net change: one entry per register or byte, from
+   *   where the emulator was to where it is now. Empty when already there.
+   * @throws {BrubeckError} With kind `"AtEnd"` when `position` is past the end.
+   */
+  goTo(position) {
+    return this.#call((raw) => toDelta(raw.goTo(position)));
+  }
+
   /** Clears registers, memory, CSRs and history. */
   reset() {
     this.#call((raw) => raw.reset());

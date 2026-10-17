@@ -88,7 +88,7 @@ export const LESSONS = Object.freeze([
     tab: 'History',
     title: 'Step back in time',
     body: [
-      'Brubeck records every instruction. `/p` (previous) steps back one instruction and puts back exactly what it changed: registers, memory and the PC. `/n` (next) replays it. The counter at the top of the REPL shows where you are.',
+      'Brubeck records every instruction. `/p` (previous) steps back one instruction and puts back exactly what it changed: registers, memory and the PC. `/n` (next) replays it. The counter at the top of the REPL shows where you are, and the timeline next to it jumps to any point: drag it, or focus it and use the arrow keys.',
       'If you step back and then run a new instruction, the steps ahead of you are thrown away, the way a browser forgets its forward pages once you follow a new link.',
     ],
     examples: [
@@ -156,7 +156,7 @@ export const LESSONS = Object.freeze([
     title: 'Store and load',
     body: [
       'There are only 32 registers, but memory is large: 1 MiB here, one address per byte. `SW x2, 0(x1)` stores the 32-bit word in x2 at address x1 + 0. `LW x3, 0(x1)` loads it back. The `offset(base)` form lets you reach nearby addresses without changing the base register.',
-      'RISC-V is little-endian: the lowest byte of a word goes at the lowest address. Store 0x11223344 and look with `/memory`; you\'ll see 44 33 22 11.',
+      'RISC-V is little-endian: the lowest byte of a word goes at the lowest address. Store 0x11223344 and look with `/memory`, or switch the dark panel to Memory; you\'ll see 44 33 22 11.',
     ],
     examples: [
       { code: 'LI x1, 0x100', note: 'base address' },

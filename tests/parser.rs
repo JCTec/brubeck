@@ -410,3 +410,105 @@ fn test_parse_reset_command() {
     // We're just testing that the command is recognized by the parser
     // Testing the actual reset functionality would require mocking stdin
 }
+
+// --- Unsigned immediates where assemblers accept them ----------------------
+
+/// Runs `line` on a fresh interpreter and returns `reg`'s value.
+fn run_and_read(line: &str, reg: brubeck::rv32_i::Register) -> u32 {
+    let mut i = Interpreter::new();
+    i.interpret(line)
+        .unwrap_or_else(|e| panic!("'{line}' should be accepted: {e}"));
+    i.cpu.get_register(reg)
+}
+
+/// Returns the out-of-range value reported for `line`.
+fn out_of_range_value(line: &str) -> i64 {
+    match brubeck::parse(line) {
+        Err(brubeck::ParseError::ImmediateOutOfRange { value, .. }) => value,
+        other => panic!("'{line}' should be out of range, got {other:?}"),
+    }
+}
+
+#[test]
+fn li_accepts_32_bit_unsigned_values() {
+    use brubeck::rv32_i::Register::X2;
+    assert_eq!(run_and_read("LI x2, 0xDEADBEEF", X2), 0xDEADBEEF);
+    assert_eq!(run_and_read("LI x2, 0x80000000", X2), 0x8000_0000);
+    assert_eq!(run_and_read("LI x2, 0xFFFFFFFF", X2), u32::MAX);
+    assert_eq!(run_and_read("LI x2, 4294967295", X2), u32::MAX);
+    assert_eq!(
+        run_and_read("LI x2, 0b10000000000000000000000000000001", X2),
+        0x8000_0001
+    );
+    // Signed values still work, down to i32::MIN.
+    assert_eq!(run_and_read("LI x2, -1", X2), u32::MAX);
+    assert_eq!(run_and_read("LI x2, -0x80000000", X2), 0x8000_0000);
+}
+
+#[test]
+fn li_rejects_values_wider_than_32_bits() {
+    let mut i = Interpreter::new();
+    assert!(i.interpret("LI x2, 0x100000000").is_err());
+    assert!(i.interpret("LI x2, 4294967296").is_err());
+    assert!(i.interpret("LI x2, -2147483649").is_err());
+}
+
+#[test]
+fn lui_and_auipc_accept_the_full_20_bit_range() {
+    use brubeck::rv32_i::Register::X1;
+    assert_eq!(run_and_read("LUI x1, 0xFFFFF", X1), 0xFFFF_F000);
+    assert_eq!(run_and_read("LUI x1, 0x80000", X1), 0x8000_0000);
+    assert_eq!(run_and_read("LUI x1, 0x7FFFF", X1), 0x7FFF_F000);
+    assert_eq!(run_and_read("LUI x1, 0", X1), 0);
+    // AUIPC at PC 0 adds the shifted immediate to 0.
+    assert_eq!(run_and_read("AUIPC x1, 0xFFFFF", X1), 0xFFFF_F000);
+    assert_eq!(run_and_read("AUIPC x1, 0x80000", X1), 0x8000_0000);
+}
+
+#[test]
+fn lui_and_auipc_reject_values_outside_0_to_0xfffff() {
+    // Matches GNU as: "lui expression not in range 0..1048575".
+    for op in ["LUI", "AUIPC"] {
+        assert_eq!(out_of_range_value(&format!("{op} x1, 0x100000")), 0x10_0000);
+        assert_eq!(out_of_range_value(&format!("{op} x1, -1")), -1);
+        match brubeck::parse(&format!("{op} x1, 0x100000")) {
+            Err(brubeck::ParseError::ImmediateOutOfRange { min, max, .. }) => {
+                assert_eq!((min, max), (0, 0xFFFFF));
+            }
+            other => panic!("{op}: expected ImmediateOutOfRange, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn twelve_bit_immediates_stay_signed() {
+    assert_eq!(out_of_range_value("ADDI x1, x0, 0xFFF"), 0xFFF);
+    assert_eq!(out_of_range_value("ADDI x1, x0, 0x800"), 0x800);
+    assert_eq!(out_of_range_value("SLTIU x1, x0, 0xFFF"), 0xFFF);
+    // A 32-bit pattern is reported as written, not reinterpreted as -1.
+    assert_eq!(out_of_range_value("ADDI x1, x0, 0xFFFFFFFF"), 0xFFFF_FFFF);
+    assert_eq!(out_of_range_value("ANDI x1, x0, 0x80000000"), 0x8000_0000);
+    assert_eq!(out_of_range_value("BEQ x1, x0, 0xFFFFFFFE"), 0xFFFF_FFFE);
+    assert_eq!(out_of_range_value("JAL x1, 0x80000000"), 0x8000_0000);
+    assert_eq!(out_of_range_value("SLLI x1, x1, 0xFFFFFFFF"), 0xFFFF_FFFF);
+
+    let mut i = Interpreter::new();
+    assert!(i.interpret("LW x1, x0, 0xFFFFFFFC").is_err());
+    assert!(i.interpret("SW x1, x0, 0xFFFFFFFC").is_err());
+    assert!(i.interpret("CSRRW x1, 0xFFFFFFFF, x2").is_err());
+    assert!(i.interpret("J 0xFFFFFFFE").is_err());
+    // Negative 12-bit values are unaffected.
+    assert!(i.interpret("ADDI x1, x0, -2048").is_ok());
+    assert!(i.interpret("ADDI x1, x0, 2047").is_ok());
+}
+
+#[test]
+fn signs_apply_to_every_base() {
+    use brubeck::rv32_i::Register::X1;
+    assert_eq!(run_and_read("ADDI x1, x0, -0x10", X1), (-16i32) as u32);
+    assert_eq!(run_and_read("ADDI x1, x0, -0b100", X1), (-4i32) as u32);
+    assert_eq!(run_and_read("ADDI x1, x0, +5", X1), 5);
+    let mut i = Interpreter::new();
+    assert!(i.interpret("ADDI x1, x0, --5").is_err());
+    assert!(i.interpret("ADDI x1, x0, -+5").is_err());
+}

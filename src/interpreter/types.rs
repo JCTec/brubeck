@@ -24,8 +24,10 @@ pub enum Token {
     Instruction(Instruction),
     /// A pseudo-instruction
     PseudoInstruction(PseudoInstruction),
-    /// A 32-bit immediate value
-    Value32(i32),
+    /// An immediate value as written. It is wider than 32 bits so that each
+    /// instruction can check its own range: `LI` accepts `0xDEADBEEF`, while
+    /// `ADDI` must still reject it rather than see a reinterpreted `-559038737`.
+    Value(i64),
     /// An offset(register) notation for loads/stores
     OffsetRegister { offset: i32, register: Register },
 }
@@ -55,7 +57,7 @@ pub enum Error {
     /// Immediate value out of valid range
     ImmediateOutOfRange {
         instruction: String,
-        value: i32,
+        value: i64,
         range: String,
     },
 }

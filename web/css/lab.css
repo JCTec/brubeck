@@ -152,6 +152,11 @@ code, kbd { font-family: var(--mono); font-size: 0.92em; }
 .challenge-done { margin: 0 0 12px; font-weight: 600; color: var(--label); }
 .hint { margin: 10px 0 0; }
 
+.colophon { margin: 40px 0 0; font-size: 12px; color: var(--ink-soft); }
+.colophon a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.colophon a:hover { color: var(--accent); }
+.colophon a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 .link-button {
   appearance: none;
   border: 0;
@@ -193,7 +198,34 @@ code, kbd { font-family: var(--mono); font-size: 0.92em; }
   flex-wrap: wrap;
 }
 .repl-title { font-weight: 800; font-size: 18px; }
-.history-pill { background: #fbf8f8; padding: 4px 10px; font-size: 13px; color: var(--ink-soft); }
+.history-pill { background: #fbf8f8; padding: 4px 10px; font-size: 13px; color: var(--ink-soft); white-space: nowrap; }
+
+/* History timeline: a 3px ink rule with a square accent handle. */
+.scrubber {
+  flex: 1 1 120px;
+  min-width: 80px;
+  height: 24px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.scrubber:disabled { cursor: default; opacity: 0.35; }
+.scrubber:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.scrubber::-webkit-slider-runnable-track { height: 3px; background: var(--ink); }
+.scrubber::-moz-range-track { height: 3px; background: var(--ink); }
+.scrubber::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5.5px; /* centre on the 3px track */
+  border: 0;
+  border-radius: 0;
+  background: var(--accent);
+}
+.scrubber::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 0; background: var(--accent); }
 .repl-actions { margin-left: auto; display: flex; gap: 6px; }
 .repl-actions .link-button { color: var(--accent-faded); }
 .repl-actions .link-button:not(:disabled) { color: var(--accent); }
@@ -210,7 +242,23 @@ code, kbd { font-family: var(--mono); font-size: 0.92em; }
 /* Focusable so keyboard users can scroll it (Safari won't focus scrollers on its own). */
 .registers:focus-visible { outline: 3px solid var(--salmon); outline-offset: -3px; }
 .registers-head { display: flex; align-items: baseline; gap: 14px; }
-.registers-title { letter-spacing: 0.2em; text-transform: uppercase; font-weight: 700; font-size: 14px; }
+/* "Registers | Memory": the panel title doubles as the view switcher. */
+.view-tabs { display: flex; align-items: baseline; gap: 10px; }
+.view-tab {
+  padding: 0 0 3px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: none;
+  color: var(--panel-text);
+  font: 700 14px var(--mono);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.view-tab:hover { color: var(--panel-strong); }
+.view-tab[aria-selected="true"] { color: var(--panel-strong); border-bottom-color: var(--accent); }
+.view-tab:focus-visible { outline: 2px solid var(--salmon); outline-offset: 3px; }
+.view-sep { color: var(--panel-rule); }
 .pc-label { font-size: 14px; margin-left: 16px; }
 .pc-value { color: var(--salmon); font-weight: 700; font-size: 15px; }
 .registers-caption {
@@ -233,6 +281,42 @@ code, kbd { font-family: var(--mono); font-size: 0.92em; }
 .register-row .dec { text-align: right; max-width: 14ch; }
 .register-row.changed { background: var(--changed); color: #ffd9cf; }
 .register-row.changed .hex { color: var(--salmon); }
+
+.memory-controls { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-top: 12px; font: 13px var(--sans); }
+.mem-addr {
+  width: 14ch;
+  padding: 2px 6px;
+  border: 0;
+  border-bottom: 2px solid var(--panel-rule);
+  background: transparent;
+  color: var(--panel-strong);
+  font: 700 13px var(--mono);
+}
+.mem-addr::placeholder { color: var(--panel-text); opacity: 0.8; }
+.mem-addr:focus { outline: none; border-bottom-color: var(--salmon); }
+.mem-addr[aria-invalid="true"] { border-bottom-color: var(--accent); }
+.mem-addr-help { color: var(--panel-text); }
+.mem-addr[aria-invalid="true"] + .mem-addr-help { color: #ff8a73; }
+.memory-row {
+  display: grid;
+  grid-template-columns: 11ch repeat(8, 2ch);
+  gap: 0 1.2ch;
+  padding: 1px 4px;
+  margin: 0 -4px;
+  font-size: 13px;
+  line-height: 1.85;
+}
+.memory-row .addr { color: var(--panel-strong); font-weight: 700; }
+.memory-row .byte.changed { background: var(--changed); color: var(--salmon); box-shadow: 0 0 0 3px var(--changed); }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 
 .terminal {
   flex: 1 1 50%;

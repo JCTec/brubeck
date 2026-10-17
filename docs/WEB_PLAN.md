@@ -40,6 +40,36 @@ Departures:
 - `Cargo.lock` didn't change: it already had the wasm-bindgen entries.
 - Not done: a VoiceOver pass. The accessibility tree (landmarks, names, the `log` live region) was checked through Playwright instead.
 
+Shipped: PR [#1](https://github.com/JCTec/brubeck/pull/1) merged into `main` (a merge commit) after CI passed; Pages enabled with GitHub Actions as the source; the deploy job ran, and **https://jctec.github.io/brubeck/** serves the lab, the `.wasm` (gzipped, `application/wasm`) and both API docs. A run-through on the live site (instructions, `/m`, `/p`, no page errors) passed. Also in that PR: CI runs once per change (`push` only for `main`, plus `pull_request`) on current action majors (no Node 20 warnings), and the pointless `.nojekyll` was dropped.
+
+## Status — round 2, Phase B: polish (2026-10-16)
+
+Branch `polish`, PR #2. Every item in the brief is done, including the optional one:
+
+- **Unsigned immediates.** `LI` takes any 32-bit pattern (`0xDEADBEEF`, `0xFFFFFFFF`, `4294967295`, down to `-0x80000000`). `LUI`/`AUIPC` take `0..0xFFFFF`. 12-bit immediates stay signed (`ADDI x1, x0, 0xFFF` is an error). Numbers parse to `i64` bounded to `i32::MIN..=u32::MAX`, and each instruction checks its own range, so `ADDI x1, x0, 0xFFFFFFFF` is rejected and reported as 4294967295, not silently treated as -1. Tests in `tests/parser.rs`.
+- **Size-neutral AccessViolation tip** in the library; the REPL appends the real size ("This REPL has 4K of memory…").
+- **History timeline:** `Interpreter::go_to(position)` (tests in `tests/history_navigation/`) returns the net change, exposed as `Emulator.goTo`. The scrubber in the REPL bar is a styled `<input type="range">` labelled by the "History n / m" pill, works from the keyboard, and highlights the net change of the whole drag, logged as one line.
+- **Memory panel:** a "Registers | Memory" tab switcher in the dark panel; a 64-byte hex grid around the last memory change (or the PC), with changed bytes highlighted and an address field to pin the view.
+- **Share by URL:** "Share" prints and copies a `#step=…&run=…` link of the instructions in effect; opening it replays them (without completing challenges) and clears the hash.
+- `.wasm`: **156 KB raw, 57 KB gzipped**.
+
+Also found and fixed:
+
+- Negative hex/binary (`-0x10`) was an "Invalid token" error, although the parser's docs promised it.
+- With tips off, the REPL removed only the first line of a multi-line tip ("Common causes: …" leaked through).
+- The lab had lost the upstream credit and the API docs links when the design replaced the smoke page; both are back in a colophon. The README links the live site.
+- Changed registers and bytes were marked by colour alone; they now also carry screen-reader text.
+
+Departures from the brief:
+
+- **Negative `LUI`/`AUIPC` immediates are now rejected** (before, -524288..524287 was accepted). The brief asked for "0..0xFFFFF, matching GNU as", and GNU as rejects negatives. Nothing in the repo or lessons used them.
+- `ImmediateOutOfRange.value` is `i64` in both `interpreter::Error` and `ParseError`, a small public API change, so errors report the value as typed.
+- `go_to` past the end returns the existing `HistoryError::AtEnd` rather than a new variant, which would have broken exhaustive matches downstream.
+- The memory grid shows 8 bytes per row (8 rows) rather than the usual 16, so it fits a 390 px phone without horizontal scrolling.
+- A scrubber move counts as `/p` or `/n` for lesson 3's checks.
+
+Open for JC: the repo has no `LICENSE` file. Upstream declares Apache-2.0 only in `Cargo.toml`, and wasm-pack warns about it. Adding the licence text is a call for the maintainer, so it wasn't done here.
+
 ---
 
 ---

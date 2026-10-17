@@ -105,6 +105,67 @@ try {
   await run('JAL x1, 8');
   check('JAL x1, 8 jumps to 8', (await page.textContent('#prompt-pc')) === '[0x00000008]>', await page.textContent('#prompt-pc'));
 
+  // --- History timeline scrubber ---------------------------------------------
+  await run('/reset');
+  check('scrubber is disabled with no history', await page.isDisabled('#scrubber'));
+  for (const line of ['ADDI x1, zero, 1', 'ADDI x1, zero, 2', 'ADDI x2, zero, 5']) await run(line);
+  await page.focus('#scrubber');
+  await page.keyboard.press('Home'); // jump to the start in one move
+  check('scrubber Home goes to the start', (await page.textContent('#history')) === 'History 0 / 3', await page.textContent('#history'));
+  check('scrubber logs the net change once',
+    (await lastLog())[0] === 'Moved to 0 / 3: x2: 5 → 0, x1: 2 → 0, PC: 0x0000000c → 0x00000000', (await lastLog())[0]);
+  const highlighted = () => page.$$eval('.register-row.changed .reg', (r) => r.map((e) => e.textContent).sort().join(' '));
+  check('scrubber highlights every register in the net change', (await highlighted()) === 'x1 x2', await highlighted());
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  check('scrubber arrow keys step forward', (await page.$eval('#scrubber', (s) => s.getAttribute('aria-valuetext'))) === '2 of 3');
+  check('scrubber restores state', (await lastLog())[0] === 'Moved to 2 / 3: x1: 1 → 2, PC: 0x00000004 → 0x00000008', (await lastLog())[0]);
+  await run('ADDI x3, zero, 3');
+  check('running after scrubbing back discards the steps ahead', (await page.textContent('#history')) === 'History 3 / 3', await page.textContent('#history'));
+
+  // --- Memory panel ------------------------------------------------------------
+  await page.focus('#tab-registers');
+  await page.keyboard.press('ArrowRight');
+  check('memory tab opens from the keyboard',
+    (await page.getAttribute('#tab-memory', 'aria-selected')) === 'true' && !(await page.isVisible('#registers')));
+  await run('LI x1, 0x200');
+  await run('LI x2, 0x11223344');
+  await run('SW x2, 4(x1)');
+  const memState = () => page.evaluate(() => ({
+    first: document.querySelector('.memory-row .addr')?.textContent,
+    changed: [...document.querySelectorAll('.byte.changed')].map((e) => e.firstChild?.textContent).join(' '),
+  }));
+  let mem = await memState();
+  check('memory view follows the last write', mem.first === '0x000001e8' && mem.changed === '44 33 22 11', JSON.stringify(mem));
+  await page.fill('#mem-addr', '0x40');
+  await page.press('#mem-addr', 'Enter');
+  mem = await memState();
+  check('memory address field pins the view', mem.first === '0x00000028', JSON.stringify(mem));
+  await page.fill('#mem-addr', 'nope');
+  await page.press('#mem-addr', 'Enter');
+  check('invalid memory address is flagged', (await page.getAttribute('#mem-addr', 'aria-invalid')) === 'true');
+  await page.fill('#mem-addr', '');
+  await page.press('#mem-addr', 'Enter');
+  await page.click('#tab-registers');
+
+  // --- Share by URL ------------------------------------------------------------
+  await page.click('#btn-share');
+  await page.waitForFunction(() => document.querySelector('#log > div:last-child')?.textContent?.includes('http'));
+  const shareLine = (await lastLog())[0];
+  const url = shareLine.slice(shareLine.indexOf('http'));
+  check('share prints a replay link', url.startsWith(base) && url.includes('#step=6') && url.includes('run='), shareLine);
+  const here = { pc: await page.textContent('#prompt-pc'), history: await page.textContent('#history') };
+  const other = await browser.newPage({ viewport: { width: 1280, height: 860 } }); // fresh storage
+  other.on('pageerror', (e) => errors.push(`shared page: ${e.message}`));
+  await other.goto(url);
+  await other.waitForSelector('#line:not([disabled])');
+  const there = { pc: await other.textContent('#prompt-pc'), history: await other.textContent('#history') };
+  check('shared link reproduces the session', JSON.stringify(here) === JSON.stringify(there), `${JSON.stringify(here)} vs ${JSON.stringify(there)}`);
+  check('shared link opens the same step', (await other.textContent('#step-label')) === 'Step 06 of 06');
+  check('replayed lines complete no challenges', (await other.textContent('#progress-label')) === '0 / 6 complete');
+  check('shared link is removed from the address bar', (await other.evaluate(() => location.hash)) === '');
+  await other.close();
+
   // --- Layout ---------------------------------------------------------------
   const panes = () => page.evaluate(() => [...document.querySelectorAll('.lesson-pane, .repl-pane')]
     .map((e) => Math.round(e.getBoundingClientRect().width)));

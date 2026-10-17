@@ -276,6 +276,33 @@ impl Interpreter {
         }
     }
 
+    /// Moves to `position` in history (0 = before the first step,
+    /// [`history_len`](Self::history_len) = the most recent state), stepping
+    /// through every entry on the way.
+    ///
+    /// Returns the net change from where it started to where it ends, so a
+    /// register that went 0 → 1 → 2 is reported once as 0 → 2. Moving to the
+    /// current position returns an empty delta. A `position` past the end
+    /// returns [`HistoryError::AtEnd`] and changes nothing.
+    pub fn go_to(&mut self, position: usize) -> Result<StateDelta, HistoryError> {
+        if position > self.history_len() {
+            return Err(HistoryError::AtEnd);
+        }
+
+        let pc = self.cpu.pc;
+        let mut net = StateDelta {
+            pc_change: (pc, pc),
+            ..StateDelta::new()
+        };
+        while self.history_position() > position {
+            net = net.merge(self.previous_state()?);
+        }
+        while self.history_position() < position {
+            net = net.merge(self.next_state()?);
+        }
+        Ok(net)
+    }
+
     /// Reset the interpreter to its initial state
     ///
     /// This clears the CPU state and history while maintaining configuration settings

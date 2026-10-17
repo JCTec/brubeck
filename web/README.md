@@ -30,5 +30,6 @@ npm run docs        # API docs in docs/js/ (TypeDoc, from the same JSDoc types)
 | `js/lab.js` | Entry point: wires lessons, REPL, registers and saved progress together |
 | `js/repl.js` | Terminal log and prompt, slash commands (`/regs`, `/memory`, `/p`, `/n`, ...) |
 | `js/registers.js` | Register panel rendering |
+| `js/memory.js` | Memory panel rendering: 64-byte hex grid around the last write or PC |
 | `css/lab.css` | Styles, following the Brubeck Lab design |
 | `pkg/` | wasm-pack output (generated, not committed) |

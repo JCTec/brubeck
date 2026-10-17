@@ -10,6 +10,15 @@ use crate::rv32_i::{
     BType, IType, Instruction, JType, PseudoInstruction, RType, Register, SType, UType,
 };
 
+/// Narrows a parsed immediate to the 32 bits the encoders take.
+///
+/// Callers range-check first where they can report a precise range; this
+/// catches the rest, so a value like `0xFFFFFFFC` is rejected instead of
+/// being truncated to `-4`.
+fn narrow(imm: i64) -> Result<i32, Error> {
+    i32::try_from(imm).map_err(|_| Error::Generic(format!("Immediate value {imm} is out of range")))
+}
+
 /// Builds a validated hardware instruction from tokens.
 ///
 /// # RISC-V Instruction Format Dispatch
@@ -193,8 +202,11 @@ pub fn build_pseudo_instruction(
             }
         }
         PseudoInstruction::J { offset: _ } => {
-            if let [Token::Value32(val)] = args {
-                PseudoInstruction::J { offset: *val }
+            if let [Token::Value(val)] = args {
+                validator::validate_immediate_range("J", *val, -1048576, 1048574)?;
+                PseudoInstruction::J {
+                    offset: narrow(*val)?,
+                }
             } else {
                 return Err(Error::Generic(format!("Invalid J arguments: {args:?}")));
             }
@@ -216,10 +228,12 @@ pub fn build_pseudo_instruction(
             }
         }
         PseudoInstruction::LI { rd: _, imm: _ } => {
-            if let [Token::Register(dest), Token::Value32(val)] = args {
+            if let [Token::Register(dest), Token::Value(val)] = args {
+                // Any 32-bit pattern, written signed or unsigned, as assemblers allow.
+                validator::validate_immediate_range("LI", *val, i32::MIN.into(), u32::MAX.into())?;
                 PseudoInstruction::LI {
                     rd: *dest,
-                    imm: *val,
+                    imm: *val as u32 as i32, // two's complement bits; in range, so lossless
                 }
             } else {
                 return Err(Error::Generic(format!("Invalid LI arguments: {args:?}")));
@@ -245,26 +259,26 @@ pub fn build_pseudo_instruction(
 /// # Validation
 ///
 /// - Destination register cannot be PC
-/// - Immediate must fit in 20 bits signed (-524288 to 524287)
+/// - Immediate must fit in 20 bits unsigned (0 to 0xFFFFF), as in GNU as
 fn build_utype(utype: &mut UType, args: &[Token], instruction_name: &str) -> Result<UType, Error> {
-    if let [Token::Register(rd), Token::Value32(imm)] = args {
+    if let [Token::Register(rd), Token::Value(imm)] = args {
         // PC cannot be used as destination in U-type instructions
         // AUIPC reads PC implicitly but doesn't allow PC as destination
         validator::validate_not_pc(*rd, "destination")?;
 
-        // Validate immediate is in 20-bit signed range
-        if *imm < -524288 || *imm > 524287 {
+        // The immediate is the upper 20 bits as a bit pattern, so 0xFFFFF is valid.
+        if *imm < 0 || *imm > 0xFFFFF {
             return Err(Error::ImmediateOutOfRange {
                 instruction: instruction_name.to_string(),
                 value: *imm,
-                range: "-524288 to 524287".to_string(),
+                range: "0 to 1048575".to_string(),
             });
         }
 
         utype.rd = *rd;
         utype
             .imm
-            .set_signed(*imm)
+            .set_unsigned(*imm as u32)
             .map_err(|e| Error::Generic(format!("{e:?}")))?;
         Ok(*utype)
     } else {
@@ -289,7 +303,7 @@ fn build_utype(utype: &mut UType, args: &[Token], instruction_name: &str) -> Res
 /// - Offset must be even (instruction alignment requirement)
 /// - Offset must fit in 20 bits signed (-1048576 to 1048574)
 fn build_jtype(jtype: &mut JType, args: &[Token], instruction_name: &str) -> Result<JType, Error> {
-    if let [Token::Register(rd), Token::Value32(imm)] = args {
+    if let [Token::Register(rd), Token::Value(imm)] = args {
         // PC cannot be used as destination register
         validator::validate_not_pc(*rd, "destination")?;
 
@@ -313,7 +327,7 @@ fn build_jtype(jtype: &mut JType, args: &[Token], instruction_name: &str) -> Res
         // Assembly offsets are in bytes; the J-immediate encodes multiples of 2.
         jtype
             .imm
-            .set_signed(*imm / 2)
+            .set_signed(narrow(*imm / 2)?)
             .map_err(|e| Error::Generic(format!("{e:?}")))?;
         Ok(*jtype)
     } else {
@@ -338,7 +352,7 @@ fn build_jtype(jtype: &mut JType, args: &[Token], instruction_name: &str) -> Res
 /// - Offset must be even (instruction alignment)
 /// - Offset must fit in 12 bits signed (-4096 to 4094)
 fn build_btype(btype: &mut BType, args: &[Token], instruction_name: &str) -> Result<BType, Error> {
-    if let [Token::Register(rs1), Token::Register(rs2), Token::Value32(imm)] = args {
+    if let [Token::Register(rs1), Token::Register(rs2), Token::Value(imm)] = args {
         // PC cannot be used as source in branch comparisons
         validator::validate_not_pc(*rs1, "source 1")?;
         validator::validate_not_pc(*rs2, "source 2")?;
@@ -364,7 +378,7 @@ fn build_btype(btype: &mut BType, args: &[Token], instruction_name: &str) -> Res
         // Assembly offsets are in bytes; the B-immediate encodes multiples of 2.
         btype
             .imm
-            .set_signed(*imm / 2)
+            .set_signed(narrow(*imm / 2)?)
             .map_err(|e| Error::Generic(format!("{e:?}")))?;
         Ok(*btype)
     } else {
@@ -389,7 +403,7 @@ fn build_btype(btype: &mut BType, args: &[Token], instruction_name: &str) -> Res
 /// - Source register cannot be PC
 /// - Immediate must fit in 12 bits signed (-2048 to 2047)
 fn build_itype(itype: &mut IType, args: &[Token], instruction_name: &str) -> Result<IType, Error> {
-    if let [Token::Register(rd), Token::Register(rs1), Token::Value32(imm)] = args {
+    if let [Token::Register(rd), Token::Register(rs1), Token::Value(imm)] = args {
         // PC validation - most I-type instructions cannot use PC
         // Exception: JALR can have PC as implicit destination (updates PC)
         if instruction_name != "JALR" {
@@ -410,7 +424,7 @@ fn build_itype(itype: &mut IType, args: &[Token], instruction_name: &str) -> Res
         itype.rs1 = *rs1;
         itype
             .imm
-            .set_signed(*imm)
+            .set_signed(narrow(*imm)?)
             .map_err(|e| Error::Generic(format!("{e:?}")))?;
         Ok(*itype)
     } else {
@@ -444,7 +458,7 @@ fn build_csr_itype(
     args: &[Token],
     instruction_name: &str,
 ) -> Result<IType, Error> {
-    if let [Token::Register(rd), Token::Value32(csr_addr), Token::Register(rs1)] = args {
+    if let [Token::Register(rd), Token::Value(csr_addr), Token::Register(rs1)] = args {
         // Validate CSR address is in valid range (12-bit unsigned)
         if *csr_addr < 0 || *csr_addr > 4095 {
             return Err(Error::ImmediateOutOfRange {
@@ -462,7 +476,7 @@ fn build_csr_itype(
         itype.rs1 = *rs1;
         itype
             .imm
-            .set_unsigned(*csr_addr as u32)
+            .set_unsigned(narrow(*csr_addr)? as u32)
             .map_err(|e| Error::Generic(format!("CSR address error: {e:?}")))?;
 
         Ok(*itype)
@@ -498,7 +512,7 @@ fn build_csr_itype_imm(
     args: &[Token],
     instruction_name: &str,
 ) -> Result<IType, Error> {
-    if let [Token::Register(rd), Token::Value32(csr_addr), Token::Value32(uimm)] = args {
+    if let [Token::Register(rd), Token::Value(csr_addr), Token::Value(uimm)] = args {
         // Validate CSR address is in valid range (12-bit unsigned)
         if *csr_addr < 0 || *csr_addr > 4095 {
             return Err(Error::ImmediateOutOfRange {
@@ -522,10 +536,10 @@ fn build_csr_itype_imm(
 
         itype.rd = *rd;
         // For CSR immediate instructions, the immediate value goes in the rs1 field
-        itype.rs1 = Register::from_u32(*uimm as u32);
+        itype.rs1 = Register::from_u32(narrow(*uimm)? as u32);
         itype
             .imm
-            .set_unsigned(*csr_addr as u32)
+            .set_unsigned(narrow(*csr_addr)? as u32)
             .map_err(|e| Error::Generic(format!("CSR address error: {e:?}")))?;
 
         Ok(*itype)
@@ -586,7 +600,7 @@ fn build_shift_itype(
     // Validate we have exactly 3 arguments
     validator::validate_argument_count(instruction_name, 3, args.len())?;
 
-    if let [Token::Register(rd), Token::Register(rs1), Token::Value32(imm)] = args {
+    if let [Token::Register(rd), Token::Register(rs1), Token::Value(imm)] = args {
         // PC cannot be used in shift instructions
         validator::validate_not_pc(*rd, "destination")?;
         validator::validate_not_pc(*rs1, "source")?;
@@ -598,7 +612,7 @@ fn build_shift_itype(
         itype.rs1 = *rs1;
         itype
             .imm
-            .set_signed(*imm)
+            .set_signed(narrow(*imm)?)
             .map_err(|e| Error::Generic(format!("{e:?}")))?;
         Ok(*itype)
     } else {
@@ -666,7 +680,7 @@ fn build_load_itype(itype: &mut IType, args: &[Token]) -> Result<IType, Error> {
             Ok(*itype)
         }
         // Legacy syntax: LW rd, rs1, offset
-        [Token::Register(rd), Token::Register(rs1), Token::Value32(imm)] => {
+        [Token::Register(rd), Token::Register(rs1), Token::Value(imm)] => {
             validator::validate_not_pc(*rd, "destination")?;
             validator::validate_not_pc(*rs1, "base address")?;
 
@@ -674,7 +688,7 @@ fn build_load_itype(itype: &mut IType, args: &[Token]) -> Result<IType, Error> {
             itype.rs1 = *rs1;
             itype
                 .imm
-                .set_signed(*imm)
+                .set_signed(narrow(*imm)?)
                 .map_err(|e| Error::Generic(format!("{e:?}")))?;
             Ok(*itype)
         }
@@ -710,7 +724,7 @@ fn build_store_stype(stype: &mut SType, args: &[Token]) -> Result<SType, Error> 
             Ok(*stype)
         }
         // Legacy syntax: SW rs1, rs2, offset (note: this seems backwards!)
-        [Token::Register(rs1), Token::Register(rs2), Token::Value32(imm)] => {
+        [Token::Register(rs1), Token::Register(rs2), Token::Value(imm)] => {
             validator::validate_not_pc(*rs1, "base address")?;
             validator::validate_not_pc(*rs2, "source")?;
 
@@ -718,7 +732,7 @@ fn build_store_stype(stype: &mut SType, args: &[Token]) -> Result<SType, Error> 
             stype.rs2 = *rs2;
             stype
                 .imm
-                .set_signed(*imm)
+                .set_signed(narrow(*imm)?)
                 .map_err(|e| Error::Generic(format!("{e:?}")))?;
             Ok(*stype)
         }
