@@ -7,7 +7,7 @@
 
 import { Emulator } from './brubeck.js';
 import { LESSONS } from './lessons.js';
-import { Repl } from './repl.js';
+import { Repl, destinationRegister } from './repl.js';
 import { renderRegisters } from './registers.js';
 
 /** @typedef {import('./lessons.js').LabState} LabState */
@@ -28,7 +28,7 @@ function loadProgress() {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null');
     if (raw && Array.isArray(raw.completed) && Number.isInteger(raw.current)) {
       return {
-        completed: raw.completed.filter((/** @type {unknown} */ i) => Number.isInteger(i) && Number(i) >= 0 && Number(i) < LESSONS.length),
+        completed: [...new Set(raw.completed.filter((/** @type {unknown} */ i) => Number.isInteger(i) && Number(i) >= 0 && Number(i) < LESSONS.length))],
         current: Math.min(Math.max(raw.current, 0), LESSONS.length - 1),
       };
     }
@@ -110,6 +110,14 @@ const el = {
   promptPc: $('prompt-pc', HTMLElement),
 };
 
+/**
+ * One executed instruction, kept in step with the emulator's history so
+ * challenges can ask which instruction actually produced a value.
+ * @typedef {Object} TrailEntry
+ * @property {string} token Upper-cased mnemonic, e.g. `"ADD"`.
+ * @property {Set<number>} registers Registers this instruction wrote (its destination plus anything it changed).
+ */
+
 /** Main controller. */
 class Lab {
   /** @type {Emulator} */ #emu;
@@ -118,6 +126,13 @@ class Lab {
   /** Commands and mnemonics run since the current lesson was opened. */
   /** @type {Set<string>} */ #used = new Set();
   /** @type {number[]} */ #changed = [];
+  /**
+   * Executed instructions; entry `i` corresponds to history entry `i`, so the
+   * first `history.position` entries are the ones currently in effect.
+   * @type {TrailEntry[]}
+   */
+  #trail = [];
+  /** @type {HTMLButtonElement[]} */ #tabButtons = [];
 
   /** @param {Emulator} emulator */
   constructor(emulator) {
@@ -132,9 +147,9 @@ class Lab {
     el.nextStep.addEventListener('click', () => this.open(this.#progress.current + 1));
     el.hintToggle.addEventListener('click', () => this.#toggleHint());
 
+    this.#buildTabs();
     this.#repl.print('Brubeck: A RISC-V REPL');
     this.#repl.print('Type an instruction and press Enter. /help lists commands.');
-    this.#renderTabs();
     this.open(this.#progress.current);
     this.#refreshMachine();
     this.#repl.enable();
@@ -197,8 +212,6 @@ class Lab {
     el.lesson.scrollTop = 0;
     this.#repl.banner(`Step ${pad(index + 1)} · ${lesson.title}`);
     this.#evaluate(false);
-    this.#renderTabs();
-    this.#renderNav();
   }
 
   #toggleHint() {
@@ -212,12 +225,53 @@ class Lab {
    * @param {StepEvent} event
    */
   #onStep(event) {
+    if (event.kind === 'crashed') {
+      this.#restart();
+      return;
+    }
     if (event.kind === 'error' || event.kind === 'clear') return;
     this.#used.add(event.token);
     if (event.delta) this.#changed = event.delta.registers.map((r) => r.index);
-    if (event.kind === 'reset') this.#changed = [];
+
+    if (event.kind === 'instruction' && event.delta) {
+      // The new instruction is the latest history entry; anything that was
+      // ahead of the old position has been discarded by the emulator.
+      const { position, length } = this.#emu.history;
+      this.#trail = this.#trail.slice(0, Math.max(0, position - 1));
+      // Credit the destination even when its value didn't change, so
+      // `ADD x3, x1, x2` counts as writing x3 even if x3 already held the sum.
+      const registers = new Set(this.#changed);
+      const rd = destinationRegister(event.line);
+      if (rd !== null) registers.add(rd);
+      this.#trail.push({ token: event.token, registers });
+      // The history limit drops the oldest entries; drop them here too.
+      while (this.#trail.length > length) this.#trail.shift();
+    } else if (event.kind === 'reset') {
+      this.#trail = [];
+      this.#changed = [];
+    }
+
     this.#refreshMachine();
-    this.#evaluate(true);
+    // Only actions that change machine state can complete a challenge;
+    // inspecting (/regs, /help, /memory) never does.
+    const changesState = event.kind === 'instruction' || event.kind === 'previous' || event.kind === 'next';
+    this.#evaluate(changesState);
+  }
+
+  /** Replaces a crashed emulator with a fresh one so the lab keeps working. */
+  #restart() {
+    try {
+      this.#emu.dispose();
+    } catch {
+      // Already unusable.
+    }
+    this.#emu = new Emulator();
+    this.#repl.setEmulator(this.#emu);
+    this.#trail = [];
+    this.#changed = [];
+    this.#repl.print('The emulator was restarted. Registers, memory and history were reset.', 'tip');
+    this.#refreshMachine();
+    this.#evaluate(false);
   }
 
   /** Redraws registers, PC and history controls from the emulator. */
@@ -225,14 +279,25 @@ class Lab {
     renderRegisters(el.registers, el.pcValue, this.#emu.registers(), this.#emu.pc, this.#changed);
     const { position, length } = this.#emu.history;
     el.history.textContent = `History ${position} / ${length}`;
-    el.btnPrev.disabled = position === 0;
-    el.btnNext.disabled = position >= length;
+    this.#setDisabled(el.btnPrev, position === 0);
+    this.#setDisabled(el.btnNext, position >= length);
     this.#repl.updatePrompt();
+  }
+
+  /**
+   * Disables a button without stranding keyboard focus on it.
+   * @param {HTMLButtonElement} button
+   * @param {boolean} disabled
+   */
+  #setDisabled(button, disabled) {
+    if (disabled && document.activeElement === button) el.input.focus();
+    button.disabled = disabled;
   }
 
   /** @returns {LabState} */
   #snapshot() {
     const values = this.#emu.registers();
+    const active = this.#trail.slice(0, this.#emu.history.position);
     return {
       reg: (index) => values[index] ?? 0,
       word: (address) => {
@@ -245,13 +310,15 @@ class Lab {
       },
       pc: this.#emu.pc,
       used: this.#used,
+      writer: (index) => active.findLast((entry) => entry.registers.has(index))?.token,
+      wrote: (token, index) => active.some((entry) => entry.token === token && entry.registers.has(index)),
     };
   }
 
   /**
    * Updates the checklist and, when allowed, records completion.
-   * @param {boolean} canComplete False when merely opening a lesson, so state
-   *   left over from another lesson doesn't complete it without any action.
+   * @param {boolean} canComplete False unless the user just changed machine
+   *   state, so leftover state or a read-only command never completes a lesson.
    */
   #evaluate(canComplete) {
     const lesson = LESSONS[this.#current];
@@ -267,8 +334,7 @@ class Lab {
       el.checks.children[i]?.classList.toggle('passed', passed);
     });
 
-    const alreadyDone = this.#progress.completed.includes(this.#current);
-    if (canComplete && !alreadyDone && results.every(Boolean)) {
+    if (canComplete && !this.#progress.completed.includes(this.#current) && results.every(Boolean)) {
       this.#progress.completed.push(this.#current);
       saveProgress(this.#progress);
       this.#repl.print(`✓ Challenge complete: ${lesson.challenge.prompt}`, 'ok');
@@ -281,18 +347,16 @@ class Lab {
       note.textContent = 'Done. Nice work.';
       el.challengePrompt.after(note);
     }
-    this.#renderTabs();
+    this.#updateTabs();
     this.#renderNav();
   }
 
-  #renderTabs() {
-    const completed = new Set(this.#progress.completed);
-    el.tabs.replaceChildren(...LESSONS.map((lesson, i) => {
+  /** Creates the step tabs once; {@link Lab#updateTabs} keeps them current. */
+  #buildTabs() {
+    this.#tabButtons = LESSONS.map((lesson, i) => {
       const tab = document.createElement('button');
       tab.type = 'button';
-      tab.className = completed.has(i) ? 'tab done' : 'tab';
-      if (i === this.#current) tab.setAttribute('aria-current', 'step');
-      tab.setAttribute('aria-label', `Step ${i + 1}: ${lesson.tab}${completed.has(i) ? ' (complete)' : ''}`);
+      tab.className = 'tab';
       const number = document.createElement('span');
       number.className = 'tab-number';
       number.textContent = pad(i + 1);
@@ -302,24 +366,35 @@ class Lab {
       tab.append(number, name);
       tab.addEventListener('click', () => this.open(i));
       return tab;
-    }));
+    });
+    el.tabs.replaceChildren(...this.#tabButtons);
+    el.progressBoxes.replaceChildren(...LESSONS.map(() => document.createElement('li')));
+  }
 
-    el.progressLabel.textContent = `${completed.size} / ${LESSONS.length} complete`;
-    el.progressBoxes.replaceChildren(...LESSONS.map((_, i) => {
-      const box = document.createElement('li');
-      if (completed.has(i)) box.className = 'done';
-      return box;
-    }));
+  /** Updates tab state and the progress meter in place (keeps focus). */
+  #updateTabs() {
+    const completed = new Set(this.#progress.completed);
+    this.#tabButtons.forEach((tab, i) => {
+      tab.classList.toggle('done', completed.has(i));
+      if (i === this.#current) tab.setAttribute('aria-current', 'step');
+      else tab.removeAttribute('aria-current');
+      tab.setAttribute('aria-label', `Step ${i + 1}: ${LESSONS[i].tab}${completed.has(i) ? ' (complete)' : ''}`);
+    });
+    [...el.progressBoxes.children].forEach((box, i) => box.classList.toggle('done', completed.has(i)));
+    const label = `${completed.size} / ${LESSONS.length} complete`;
+    // Only touch the live region when the value changes, so screen readers
+    // don't re-announce it after every command.
+    if (el.progressLabel.textContent !== label) el.progressLabel.textContent = label;
   }
 
   #renderNav() {
     const index = this.#current;
     const last = index === LESSONS.length - 1;
     const done = this.#progress.completed.includes(index);
-    el.prevStep.disabled = index === 0;
-    el.nextStep.disabled = last;
+    this.#setDisabled(el.prevStep, index === 0);
+    this.#setDisabled(el.nextStep, last);
     el.nextStep.textContent = last
-      ? (this.#progress.completed.length === LESSONS.length ? 'All steps complete' : 'Last step')
+      ? (new Set(this.#progress.completed).size === LESSONS.length ? 'All steps complete' : 'Last step')
       : (done ? 'Next step →' : 'Skip to next step');
   }
 }

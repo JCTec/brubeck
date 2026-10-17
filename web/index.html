@@ -16,8 +16,8 @@
       <span class="wordmark">Brubeck</span>
       <span class="tagline">Learn RISC-V assembly, one instruction at a time</span>
     </div>
-    <div class="progress" aria-live="polite">
-      <span id="progress-label">0 / 6 complete</span>
+    <div class="progress">
+      <span id="progress-label" role="status">0 / 6 complete</span>
       <ol id="progress-boxes" class="progress-boxes" aria-hidden="true"></ol>
     </div>
   </header>
@@ -74,8 +74,9 @@
       <div class="terminal" id="terminal">
         <div id="log" class="log" role="log" aria-live="polite"></div>
         <form id="prompt" class="prompt" autocomplete="off">
-          <label for="line" class="prompt-pc" id="prompt-pc">[0x00000000]&gt;</label>
+          <span class="prompt-pc" id="prompt-pc" aria-hidden="true">[0x00000000]&gt;</span>
           <input id="line" class="prompt-input" spellcheck="false" autocapitalize="off"
+                 aria-label="Instruction or command"
                  placeholder="type an instruction, or /help" disabled>
         </form>
       </div>

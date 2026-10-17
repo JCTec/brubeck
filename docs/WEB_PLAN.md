@@ -6,6 +6,23 @@ Run the Brubeck RV32I emulator in the browser: the Rust core is compiled to WebA
 
 ---
 
+## Status — round 1 (2026-10-16)
+
+On branch `web` of `JCTec/brubeck`. Done:
+
+- **Phase 0 — core fixes:** complete. `cli` feature; memory-edge panics, PC overflow, doubled JAL/branch offsets, misaligned taken branches; `LI` is one atomic history step; memory tracked in `store()` (~0.9 ms → 6.5 µs per instruction, independent of memory size); failed instructions leave no partial state; CSR instructions advance the PC. Regression suite in `tests/robustness.rs`. The project's gate (`fmt`, `clippy -D warnings`, `test`) passes.
+- **Phase 1 — wasm wrapper:** complete. `crates/brubeck-wasm` uses only wasm-bindgen primitives (no serde, a change from the original plan); conversion logic is plain Rust, unit-tested natively. `interpreter::Error` is now public so errors carry a stable `kind` and the fuzzy `suggestion`. History position and length are exposed.
+- **Phase 2 — web app:** replaced by **Brubeck Lab**, following the design PDF: six guided lessons with click-to-paste examples and self-checking challenges, a REPL with a live register panel and history controls, saved progress, and a stacked layout on phones. Lesson content lives in `web/js/lessons.js`. The timeline scrubber and a separate memory panel are deferred; `/memory` covers memory for now.
+- **Phase 3 — CI and Pages:** workflow written; staged at `ci/web.yml` because remote tools can't write to `.github/`.
+
+Not yet verified anywhere: the real `wasm32` / `wasm-pack` build (blocked in the build sandbox). The first CI run on GitHub is that proof.
+
+Known follow-ups: hex literals above `0x7FFFFFFF` (e.g. `LI x2, 0xDEADBEEF`) are rejected by the parser; the AccessViolation tip always says "1MB" regardless of the configured memory size.
+
+---
+
+---
+
 ## Why this is feasible
 
 - The core library has **zero dependencies** and does **no I/O**: no `std::fs`, `std::time`, threads or printing outside tests. That is the ideal case for `wasm32-unknown-unknown`.

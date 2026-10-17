@@ -17,6 +17,8 @@
  * @property {(address: number) => number} word Little-endian 32-bit word at `address` (0 if out of range).
  * @property {number} pc Program counter.
  * @property {Set<string>} used Upper-cased mnemonics and slash commands run during this step, e.g. `"ADD"`, `"/P"`.
+ * @property {(index: number) => string | undefined} writer Mnemonic of the instruction, still in effect, that last changed x`index`.
+ * @property {(token: string, index: number) => boolean} wrote True if an instruction `token` still in effect changed x`index`.
  */
 
 /**
@@ -77,7 +79,7 @@ export const LESSONS = Object.freeze([
       prompt: 'Make x3 hold 42 by adding two registers.',
       checks: [
         { label: 'x3 == 42', test: (s) => s.reg(3) === 42 },
-        { label: 'used ADD', test: (s) => s.used.has('ADD') },
+        { label: 'x3 written by ADD', test: (s) => s.writer(3) === 'ADD' },
       ],
       hint: 'Put two numbers that add up to 42 in x1 and x2, then run `ADD x3, x1, x2`.',
     },
@@ -123,7 +125,7 @@ export const LESSONS = Object.freeze([
       prompt: 'Make x2 hold 80 using a left shift.',
       checks: [
         { label: 'x2 == 80', test: (s) => s.reg(2) === 80 },
-        { label: 'used SLLI or SLL', test: (s) => s.used.has('SLLI') || s.used.has('SLL') },
+        { label: 'x2 written by a left shift', test: (s) => ['SLLI', 'SLL'].includes(s.writer(2) ?? '') },
       ],
       hint: '80 = 5 × 16, and 16 = 2⁴. Try `ADDI x1, zero, 5`, then `SLLI x2, x1, 4`.',
     },
@@ -144,7 +146,7 @@ export const LESSONS = Object.freeze([
       prompt: 'Put 0x12345678 in x1 with LUI and ADDI.',
       checks: [
         { label: 'x1 == 0x12345678', test: (s) => s.reg(1) === 0x12345678 },
-        { label: 'used LUI', test: (s) => s.used.has('LUI') },
+        { label: 'x1 built with LUI', test: (s) => s.wrote('LUI', 1) },
       ],
       hint: 'Run `LUI x1, 0x12345`, then `ADDI x1, x1, 0x678`.',
     },
@@ -168,7 +170,7 @@ export const LESSONS = Object.freeze([
       checks: [
         { label: 'memory[0x100] == 0x11223344', test: (s) => s.word(0x100) === 0x11223344 },
         { label: 'x3 == 0x11223344', test: (s) => s.reg(3) === 0x11223344 },
-        { label: 'used LW', test: (s) => s.used.has('LW') },
+        { label: 'x3 loaded with LW', test: (s) => s.writer(3) === 'LW' },
       ],
       hint: 'Put 0x100 in x1 and the value in x2 (`LI` works for both), then `SW x2, 0(x1)` and `LW x3, 0(x1)`.',
     },

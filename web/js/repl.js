@@ -15,8 +15,9 @@ import { hex32 } from './registers.js';
 /**
  * What a line of input did, reported to the owner after every run.
  * @typedef {Object} StepEvent
- * @property {'instruction' | 'previous' | 'next' | 'reset' | 'inspect' | 'clear' | 'error'} kind
+ * @property {'instruction' | 'previous' | 'next' | 'reset' | 'inspect' | 'clear' | 'error' | 'crashed'} kind
  * @property {string} token Upper-cased mnemonic or canonical command, e.g. `"ADDI"`, `"/P"`.
+ * @property {string} line The line as typed.
  * @property {StateDelta} [delta] State changes, for instructions and history moves.
  */
 
@@ -67,6 +68,22 @@ export function parseRegister(name) {
   if (lower === 'fp') return 8;
   const abi = ABI_NAMES.indexOf(lower);
   return abi >= 0 ? abi : null;
+}
+
+/** Instructions whose first operand is a source, not a destination. */
+const NO_DESTINATION = new Set(['SB', 'SH', 'SW', 'BEQ', 'BNE', 'BLT', 'BGE', 'BLTU', 'BGEU',
+  'J', 'JR', 'RET', 'NOP', 'FENCE', 'ECALL', 'EBREAK']);
+
+/**
+ * The register an instruction writes, e.g. 3 for `ADD x3, x1, x2`, or null.
+ * @param {string} line
+ * @returns {number | null}
+ */
+export function destinationRegister(line) {
+  const [mnemonic, first] = line.trim().split(/[\s,()]+/);
+  if (!mnemonic || !first || NO_DESTINATION.has(mnemonic.toUpperCase())) return null;
+  const index = parseRegister(first);
+  return index === 0 ? null : index; // writes to x0 are discarded
 }
 
 /**
@@ -157,9 +174,27 @@ export class Repl {
     this.#el.input.value = this.#lines[this.#cursor] ?? '';
   }
 
+  /**
+   * Replaces the emulator, e.g. after the previous one crashed.
+   * @param {Emulator} emulator
+   */
+  setEmulator(emulator) {
+    this.#emu = emulator;
+    this.updatePrompt();
+  }
+
+  /** The prompt text, `[0x…]>`, or `[crashed]>` if the emulator is unusable. */
+  #promptText() {
+    try {
+      return `[${hex32(this.#emu.pc)}]>`;
+    } catch {
+      return '[crashed]>';
+    }
+  }
+
   /** Shows the current PC in the prompt. */
   updatePrompt() {
-    this.#el.promptPc.textContent = `[${hex32(this.#emu.pc)}]>`;
+    this.#el.promptPc.textContent = this.#promptText();
   }
 
   /**
@@ -224,7 +259,7 @@ export class Repl {
     const echo = this.print('', 'in');
     const pc = document.createElement('span');
     pc.className = 'pc';
-    pc.textContent = `[${hex32(this.#emu.pc)}]>`;
+    pc.textContent = this.#promptText();
     echo.append(pc, ` ${line}`);
 
     const words = line.split(/\s+/);
@@ -232,12 +267,12 @@ export class Repl {
     /** @type {StepEvent} */
     let event;
     try {
-      event = head.startsWith('/') ? this.#command(head, words.slice(1)) : this.#instruction(line, head);
+      event = head.startsWith('/') ? { ...this.#command(head, words.slice(1)), line } : this.#instruction(line, head);
     } catch (error) {
       if (!(error instanceof BrubeckError)) throw error;
       this.print(error.message, 'err');
       if (error.tip) this.print(error.tip, 'tip');
-      event = { kind: 'error', token: head };
+      event = { kind: error.kind === 'Crashed' ? 'crashed' : 'error', token: head, line };
     }
     this.updatePrompt();
     this.#onStep(event);
@@ -251,13 +286,13 @@ export class Repl {
   #instruction(line, mnemonic) {
     const delta = this.#emu.interpret(line);
     this.print(describeDelta(delta), 'ok');
-    return { kind: 'instruction', token: mnemonic, delta };
+    return { kind: 'instruction', token: mnemonic, line, delta };
   }
 
   /**
    * @param {string} head Upper-cased command word.
    * @param {string[]} args
-   * @returns {StepEvent}
+   * @returns {Omit<StepEvent, 'line'>}
    */
   #command(head, args) {
     const name = COMMANDS[/** @type {keyof typeof COMMANDS} */ (head)];
