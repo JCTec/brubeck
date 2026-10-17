@@ -105,6 +105,24 @@ try {
   await run('JAL x1, 8');
   check('JAL x1, 8 jumps to 8', (await page.textContent('#prompt-pc')) === '[0x00000008]>', await page.textContent('#prompt-pc'));
 
+  // --- History timeline scrubber ---------------------------------------------
+  await run('/reset');
+  check('scrubber is disabled with no history', await page.isDisabled('#scrubber'));
+  for (const line of ['ADDI x1, zero, 1', 'ADDI x1, zero, 2', 'ADDI x2, zero, 5']) await run(line);
+  await page.focus('#scrubber');
+  await page.keyboard.press('Home'); // jump to the start in one move
+  check('scrubber Home goes to the start', (await page.textContent('#history')) === 'History 0 / 3', await page.textContent('#history'));
+  check('scrubber logs the net change once',
+    (await lastLog())[0] === 'Moved to 0 / 3: x2: 5 → 0, x1: 2 → 0, PC: 0x0000000c → 0x00000000', (await lastLog())[0]);
+  const highlighted = () => page.$$eval('.register-row.changed .reg', (r) => r.map((e) => e.textContent).sort().join(' '));
+  check('scrubber highlights every register in the net change', (await highlighted()) === 'x1 x2', await highlighted());
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  check('scrubber arrow keys step forward', (await page.$eval('#scrubber', (s) => s.getAttribute('aria-valuetext'))) === '2 of 3');
+  check('scrubber restores state', (await lastLog())[0] === 'Moved to 2 / 3: x1: 1 → 2, PC: 0x00000004 → 0x00000008', (await lastLog())[0]);
+  await run('ADDI x3, zero, 3');
+  check('running after scrubbing back discards the steps ahead', (await page.textContent('#history')) === 'History 3 / 3', await page.textContent('#history'));
+
   // --- Layout ---------------------------------------------------------------
   const panes = () => page.evaluate(() => [...document.querySelectorAll('.lesson-pane, .repl-pane')]
     .map((e) => Math.round(e.getBoundingClientRect().width)));

@@ -88,7 +88,7 @@ export const LESSONS = Object.freeze([
     tab: 'History',
     title: 'Step back in time',
     body: [
-      'Brubeck records every instruction. `/p` (previous) steps back one instruction and puts back exactly what it changed: registers, memory and the PC. `/n` (next) replays it. The counter at the top of the REPL shows where you are.',
+      'Brubeck records every instruction. `/p` (previous) steps back one instruction and puts back exactly what it changed: registers, memory and the PC. `/n` (next) replays it. The counter at the top of the REPL shows where you are, and the timeline next to it jumps to any point: drag it, or focus it and use the arrow keys.',
       'If you step back and then run a new instruction, the steps ahead of you are thrown away, the way a browser forgets its forward pages once you follow a new link.',
     ],
     examples: [

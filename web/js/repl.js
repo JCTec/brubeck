@@ -254,6 +254,21 @@ export class Repl {
     this.#el.input.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 
+  /**
+   * Logs a history move made outside the prompt (the timeline scrubber) and
+   * reports it like `/p` or `/n`, so challenges treat it the same way.
+   * @param {StateDelta} delta Net change of the whole move.
+   * @param {number} from History position before the move.
+   * @param {number} to History position after it.
+   */
+  reportMove(delta, from, to) {
+    const { length } = this.#emu.history;
+    this.print(`Moved to ${to} / ${length}: ${describeDelta(delta)}`, 'ok');
+    this.updatePrompt();
+    const back = to < from;
+    this.#onStep({ kind: back ? 'previous' : 'next', token: back ? '/P' : '/N', line: `(timeline ${from} → ${to})`, delta });
+  }
+
   /** Enables the prompt once the emulator is ready. */
   enable() {
     this.#el.input.disabled = false;

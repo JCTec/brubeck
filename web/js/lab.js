@@ -5,7 +5,7 @@
  * @module lab
  */
 
-import { Emulator } from './brubeck.js';
+import { Emulator, BrubeckError } from './brubeck.js';
 import { LESSONS } from './lessons.js';
 import { Repl, destinationRegister } from './repl.js';
 import { renderRegisters } from './registers.js';
@@ -98,6 +98,7 @@ const el = {
   prevStep: $('prev-step', HTMLButtonElement),
   nextStep: $('next-step', HTMLButtonElement),
   history: $('history', HTMLElement),
+  scrubber: $('scrubber', HTMLInputElement),
   btnPrev: $('btn-prev', HTMLButtonElement),
   btnNext: $('btn-next', HTMLButtonElement),
   btnReset: $('btn-reset', HTMLButtonElement),
@@ -133,6 +134,8 @@ class Lab {
    */
   #trail = [];
   /** @type {HTMLButtonElement[]} */ #tabButtons = [];
+  /** History position when the current scrubber gesture began, or null. */
+  /** @type {number | null} */ #scrubFrom = null;
 
   /** @param {Emulator} emulator */
   constructor(emulator) {
@@ -143,6 +146,9 @@ class Lab {
     el.btnNext.addEventListener('click', () => this.#repl.run('/n'));
     el.btnReset.addEventListener('click', () => this.#repl.run('/reset'));
     el.btnClear.addEventListener('click', () => this.#repl.clear());
+    // `input` fires while dragging and per arrow key; `change` once the move ends.
+    el.scrubber.addEventListener('input', () => this.#scrub(false));
+    el.scrubber.addEventListener('change', () => this.#scrub(true));
     el.prevStep.addEventListener('click', () => this.open(this.#progress.current - 1));
     el.nextStep.addEventListener('click', () => this.open(this.#progress.current + 1));
     el.hintToggle.addEventListener('click', () => this.#toggleHint());
@@ -258,6 +264,34 @@ class Lab {
     this.#evaluate(changesState);
   }
 
+  /**
+   * Follows the timeline scrubber. Every update moves from where the gesture
+   * started, so the highlights always show the net change of the whole drag.
+   * @param {boolean} done True when the gesture has ended.
+   */
+  #scrub(done) {
+    const to = el.scrubber.valueAsNumber;
+    const from = (this.#scrubFrom ??= this.#emu.history.position);
+    let delta;
+    try {
+      this.#emu.goTo(from);
+      delta = this.#emu.goTo(to);
+    } catch (error) {
+      this.#scrubFrom = null;
+      if (error instanceof BrubeckError && error.kind === 'Crashed') this.#restart();
+      else this.#refreshMachine();
+      return;
+    }
+    if (!done) {
+      this.#changed = delta.registers.map((r) => r.index);
+      this.#refreshMachine();
+      return;
+    }
+    this.#scrubFrom = null;
+    if (to === from) this.#refreshMachine();
+    else this.#repl.reportMove(delta, from, to);
+  }
+
   /** Replaces a crashed emulator with a fresh one so the lab keeps working. */
   #restart() {
     try {
@@ -279,14 +313,18 @@ class Lab {
     renderRegisters(el.registers, el.pcValue, this.#emu.registers(), this.#emu.pc, this.#changed);
     const { position, length } = this.#emu.history;
     el.history.textContent = `History ${position} / ${length}`;
+    el.scrubber.max = String(length);
+    el.scrubber.value = String(position);
+    el.scrubber.setAttribute('aria-valuetext', `${position} of ${length}`);
+    this.#setDisabled(el.scrubber, length === 0);
     this.#setDisabled(el.btnPrev, position === 0);
     this.#setDisabled(el.btnNext, position >= length);
     this.#repl.updatePrompt();
   }
 
   /**
-   * Disables a button without stranding keyboard focus on it.
-   * @param {HTMLButtonElement} button
+   * Disables a control without stranding keyboard focus on it.
+   * @param {HTMLButtonElement | HTMLInputElement} button
    * @param {boolean} disabled
    */
   #setDisabled(button, disabled) {

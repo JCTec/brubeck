@@ -52,7 +52,9 @@
     <section class="repl-pane" aria-label="REPL">
       <div class="repl-bar">
         <span class="repl-title">REPL</span>
-        <span class="history-pill" id="history">History 0 / 0</span>
+        <label class="history-pill" id="history" for="scrubber">History 0 / 0</label>
+        <input type="range" class="scrubber" id="scrubber" min="0" max="0" value="0" step="1"
+               aria-label="History position" aria-valuetext="0 of 0" disabled>
         <div class="repl-actions">
           <button type="button" class="link-button" id="btn-prev" aria-label="Previous state (/p)">← /p</button>
           <button type="button" class="link-button" id="btn-next" aria-label="Next state (/n)">/n →</button>
