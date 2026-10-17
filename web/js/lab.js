@@ -17,6 +17,11 @@ import { renderMemory, windowStart, WINDOW_SIZE } from './memory.js';
 
 const STORAGE_KEY = 'brubeck-lab:v1';
 
+/** Most lines a shared link will replay, so a huge link can't hang the page. */
+const MAX_SHARED_LINES = 1000;
+/** Longest line a shared link may contain. */
+const MAX_SHARED_LINE_LENGTH = 200;
+
 /**
  * Persisted progress. Stored per browser; the lab works without it.
  * @typedef {Object} Progress
@@ -80,6 +85,27 @@ function appendRich(parent, text) {
   });
 }
 
+/**
+ * Reads a session shared through the URL hash, e.g.
+ * `#step=6&run=LI+x1,+0x100%0ASW+x2,+0(x1)`.
+ * @returns {{step: number | null, lines: string[]} | null} Null when the hash holds no session.
+ */
+function readSharedSession() {
+  const params = new URLSearchParams(location.hash.slice(1));
+  const run = params.get('run');
+  const stepParam = params.get('step');
+  if (run === null && stepParam === null) return null;
+  const step = Number(stepParam) - 1;
+  return {
+    step: Number.isInteger(step) && step >= 0 && step < LESSONS.length ? step : null,
+    lines: (run ?? '')
+      .split('\n')
+      .map((line) => line.trim().slice(0, MAX_SHARED_LINE_LENGTH))
+      .filter(Boolean)
+      .slice(0, MAX_SHARED_LINES),
+  };
+}
+
 /** Two-digit step number, e.g. `03`. */
 const pad = (/** @type {number} */ n) => String(n).padStart(2, '0');
 
@@ -105,6 +131,7 @@ const el = {
   btnNext: $('btn-next', HTMLButtonElement),
   btnReset: $('btn-reset', HTMLButtonElement),
   btnClear: $('btn-clear', HTMLButtonElement),
+  btnShare: $('btn-share', HTMLButtonElement),
   registers: $('registers', HTMLElement),
   tabRegisters: $('tab-registers', HTMLButtonElement),
   tabMemory: $('tab-memory', HTMLButtonElement),
@@ -125,6 +152,7 @@ const el = {
  * challenges can ask which instruction actually produced a value.
  * @typedef {Object} TrailEntry
  * @property {string} token Upper-cased mnemonic, e.g. `"ADD"`.
+ * @property {string} line The line as typed, for sharing.
  * @property {Set<number>} registers Registers this instruction wrote (its destination plus anything it changed).
  */
 
@@ -142,6 +170,10 @@ class Lab {
    * @type {TrailEntry[]}
    */
   #trail = [];
+  /** False once the history limit has dropped trail entries, so it can't be replayed. */
+  #trailComplete = true;
+  /** True while a shared link is replaying; replayed lines don't complete challenges. */
+  #replaying = false;
   /** @type {HTMLButtonElement[]} */ #tabButtons = [];
   /** History position when the current scrubber gesture began, or null. */
   /** @type {number | null} */ #scrubFrom = null;
@@ -163,6 +195,7 @@ class Lab {
     el.btnNext.addEventListener('click', () => this.#repl.run('/n'));
     el.btnReset.addEventListener('click', () => this.#repl.run('/reset'));
     el.btnClear.addEventListener('click', () => this.#repl.clear());
+    el.btnShare.addEventListener('click', () => this.#share());
     // `input` fires while dragging and per arrow key; `change` once the move ends.
     el.scrubber.addEventListener('input', () => this.#scrub(false));
     el.scrubber.addEventListener('change', () => this.#scrub(true));
@@ -190,9 +223,49 @@ class Lab {
     this.#buildTabs();
     this.#repl.print('Brubeck: A RISC-V REPL');
     this.#repl.print('Type an instruction and press Enter. /help lists commands.');
-    this.open(this.#progress.current);
+    const shared = readSharedSession();
+    this.open(shared?.step ?? this.#progress.current);
     this.#refreshMachine();
+    if (shared) this.#replay(shared.lines);
     this.#repl.enable();
+  }
+
+  /**
+   * Runs the lines from a shared link, then removes them from the address bar
+   * so a reload doesn't replay them on top of later work.
+   * @param {string[]} lines
+   */
+  #replay(lines) {
+    history.replaceState(null, '', location.pathname + location.search);
+    if (!lines.length) return;
+    this.#repl.print(`Replaying a shared session (${lines.length} line${lines.length === 1 ? '' : 's'}).`, 'tip');
+    this.#replaying = true;
+    try {
+      for (const line of lines) this.#repl.run(line);
+    } finally {
+      this.#replaying = false;
+    }
+  }
+
+  /** Copies a link that replays the instructions currently in effect. */
+  async #share() {
+    if (!this.#trailComplete) {
+      this.#repl.print('This session is longer than the history limit, so it can\'t be replayed from a link. Use /reset and try again.', 'err');
+      return;
+    }
+    const lines = this.#trail.slice(0, this.#emu.history.position).map((entry) => entry.line);
+    const params = new URLSearchParams({ step: String(this.#current + 1) });
+    if (lines.length) params.set('run', lines.join('\n'));
+    const url = `${location.origin}${location.pathname}${location.search}#${params}`;
+    const what = lines.length ? `${lines.length} instruction${lines.length === 1 ? '' : 's'}` : 'this step';
+    // Print first: the clipboard can be blocked, or wait on a permission prompt.
+    const message = this.#repl.print(`Link to ${what}: ${url}`, 'ok');
+    try {
+      await navigator.clipboard.writeText(url);
+      message.textContent = `Copied a link to ${what}: ${url}`;
+    } catch {
+      // The printed link is still there to copy by hand.
+    }
   }
 
   /** @returns {number} */
@@ -283,11 +356,15 @@ class Lab {
       const registers = new Set(this.#changed);
       const rd = destinationRegister(event.line);
       if (rd !== null) registers.add(rd);
-      this.#trail.push({ token: event.token, registers });
+      this.#trail.push({ token: event.token, line: event.line, registers });
       // The history limit drops the oldest entries; drop them here too.
-      while (this.#trail.length > length) this.#trail.shift();
+      while (this.#trail.length > length) {
+        this.#trail.shift();
+        this.#trailComplete = false;
+      }
     } else if (event.kind === 'reset') {
       this.#trail = [];
+      this.#trailComplete = true;
       this.#forgetChanges();
     }
 
@@ -295,7 +372,7 @@ class Lab {
     // Only actions that change machine state can complete a challenge;
     // inspecting (/regs, /help, /memory) never does.
     const changesState = event.kind === 'instruction' || event.kind === 'previous' || event.kind === 'next';
-    this.#evaluate(changesState);
+    this.#evaluate(changesState && !this.#replaying);
   }
 
   /**
@@ -400,6 +477,7 @@ class Lab {
     this.#emu = new Emulator();
     this.#repl.setEmulator(this.#emu);
     this.#trail = [];
+    this.#trailComplete = true;
     this.#forgetChanges();
     this.#repl.print('The emulator was restarted. Registers, memory and history were reset.', 'tip');
     this.#refreshMachine();

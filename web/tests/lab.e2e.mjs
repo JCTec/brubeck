@@ -148,6 +148,24 @@ try {
   await page.press('#mem-addr', 'Enter');
   await page.click('#tab-registers');
 
+  // --- Share by URL ------------------------------------------------------------
+  await page.click('#btn-share');
+  await page.waitForFunction(() => document.querySelector('#log > div:last-child')?.textContent?.includes('http'));
+  const shareLine = (await lastLog())[0];
+  const url = shareLine.slice(shareLine.indexOf('http'));
+  check('share prints a replay link', url.startsWith(base) && url.includes('#step=6') && url.includes('run='), shareLine);
+  const here = { pc: await page.textContent('#prompt-pc'), history: await page.textContent('#history') };
+  const other = await browser.newPage({ viewport: { width: 1280, height: 860 } }); // fresh storage
+  other.on('pageerror', (e) => errors.push(`shared page: ${e.message}`));
+  await other.goto(url);
+  await other.waitForSelector('#line:not([disabled])');
+  const there = { pc: await other.textContent('#prompt-pc'), history: await other.textContent('#history') };
+  check('shared link reproduces the session', JSON.stringify(here) === JSON.stringify(there), `${JSON.stringify(here)} vs ${JSON.stringify(there)}`);
+  check('shared link opens the same step', (await other.textContent('#step-label')) === 'Step 06 of 06');
+  check('replayed lines complete no challenges', (await other.textContent('#progress-label')) === '0 / 6 complete');
+  check('shared link is removed from the address bar', (await other.evaluate(() => location.hash)) === '');
+  await other.close();
+
   // --- Layout ---------------------------------------------------------------
   const panes = () => page.evaluate(() => [...document.querySelectorAll('.lesson-pane, .repl-pane')]
     .map((e) => Math.round(e.getBoundingClientRect().width)));
