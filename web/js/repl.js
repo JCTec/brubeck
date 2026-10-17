@@ -22,6 +22,13 @@ import { hex32 } from './registers.js';
  */
 
 /**
+ * Receives a {@link StepEvent} after every line is run.
+ * @callback StepHandler
+ * @param {StepEvent} event
+ * @returns {void}
+ */
+
+/**
  * @typedef {Object} ReplElements
  * @property {HTMLElement} log
  * @property {HTMLFormElement} form
@@ -29,8 +36,13 @@ import { hex32 } from './registers.js';
  * @property {HTMLElement} promptPc
  */
 
-/** Canonical names for slash-command aliases. */
-const COMMANDS = /** @type {const} */ ({
+/** @typedef {'/HELP' | '/REGS' | '/MEMORY' | '/P' | '/N' | '/RESET' | '/CLEAR'} CommandName */
+
+/**
+ * Canonical names for slash-command aliases.
+ * @type {Readonly<Record<string, CommandName>>}
+ */
+const COMMANDS = Object.freeze({
   '/H': '/HELP', '/HELP': '/HELP',
   '/R': '/REGS', '/REGS': '/REGS',
   '/M': '/MEMORY', '/MEMORY': '/MEMORY',
@@ -136,14 +148,14 @@ function hexDump(bytes, start) {
 export class Repl {
   /** @type {Emulator} */ #emu;
   /** @type {ReplElements} */ #el;
-  /** @type {(event: StepEvent) => void} */ #onStep;
+  /** @type {StepHandler} */ #onStep;
   /** @type {string[]} */ #lines = [];
   #cursor = 0;
 
   /**
    * @param {Emulator} emulator
    * @param {ReplElements} elements
-   * @param {(event: StepEvent) => void} onStep Called after every line is run.
+   * @param {StepHandler} onStep Called after every line is run.
    */
   constructor(emulator, elements, onStep) {
     this.#emu = emulator;
@@ -295,7 +307,7 @@ export class Repl {
    * @returns {Omit<StepEvent, 'line'>}
    */
   #command(head, args) {
-    const name = COMMANDS[/** @type {keyof typeof COMMANDS} */ (head)];
+    const name = COMMANDS[head];
     switch (name) {
       case '/HELP':
         this.print(HELP, 'table');

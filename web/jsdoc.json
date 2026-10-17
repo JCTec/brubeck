@@ -1,5 +1,0 @@
-{
-  "source": { "include": ["js"], "includePattern": "\\.js$" },
-  "opts": { "destination": "docs/js", "recurse": true, "readme": "README.md" },
-  "plugins": ["plugins/markdown"]
-}

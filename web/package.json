@@ -6,13 +6,13 @@
   "license": "Apache-2.0",
   "scripts": {
     "typecheck": "tsc -p jsconfig.json",
-    "docs": "jsdoc -c jsdoc.json",
+    "docs": "typedoc",
     "serve": "python3 -m http.server 8000",
     "test:e2e": "node tests/lab.e2e.mjs"
   },
   "devDependencies": {
-    "jsdoc": "^4.0.4",
     "playwright": "^1.48.0",
+    "typedoc": "^0.28.20",
     "typescript": "^5.9.3"
   }
 }

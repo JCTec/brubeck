@@ -18,7 +18,7 @@ cd web && python3 -m http.server 8000   # open http://localhost:8000
 cd web
 npm install
 npm run typecheck   # tsc --checkJs over js/, using the generated pkg/*.d.ts
-npm run docs        # JSDoc site in docs/js/
+npm run docs        # API docs in docs/js/ (TypeDoc, from the same JSDoc types)
 ```
 
 ## Layout
