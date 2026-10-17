@@ -1,6 +1,3 @@
-# Move to .github/workflows/web.yml before pushing:
-#   git mv ci/web.yml .github/workflows/web.yml
-
 name: CI & Pages
 
 on:
