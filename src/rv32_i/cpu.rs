@@ -1599,13 +1599,14 @@ impl std::fmt::Display for CPUError {
                     addr % 4)
             }
             CPUError::AccessViolation(addr) => {
+                // Size-neutral: the CPU's memory size is configurable, and callers
+                // that know it (like the REPL) can add it to the message.
                 write!(f, "Memory address out of bounds: 0x{addr:08x}\n\
-                    💡 Tip: The default CPU has 1MB of memory (addresses 0x00000000 to 0x000FFFFF).\n\
+                    💡 Tip: Valid addresses run from 0x00000000 to the end of memory, and the whole access must fit.\n\
                     Common causes:\n\
                     - Uninitialized register used as base address\n\
                     - Incorrect offset calculation\n\
-                    - Stack pointer not properly initialized\n\
-                    Use --memory flag to increase memory size if needed.")
+                    - Stack pointer not properly initialized")
             }
             CPUError::EnvironmentCall => {
                 write!(

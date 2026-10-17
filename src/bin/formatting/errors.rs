@@ -1,7 +1,33 @@
 //! Error formatting with helpful context and tips
 
-use brubeck::HistoryError;
+use brubeck::interpreter::Error;
+use brubeck::{CPUError, HistoryError};
 use std::io;
+
+/// Formats an interpreter error, adding what only the REPL knows: the
+/// configured memory size (the library's message is size-neutral).
+pub fn format_interpreter_error(error: &Error, memory_size: usize) -> String {
+    let mut output = error.to_string();
+    if let Error::Cpu(CPUError::AccessViolation(_)) = error {
+        output.push_str(&format!(
+            "\n💡 Tip: This REPL has {} of memory (0x00000000 to 0x{:08x}). Start it with --memory to change that.",
+            format_memory_size(memory_size),
+            memory_size.saturating_sub(1)
+        ));
+    }
+    output
+}
+
+/// Formats a byte count the way `--memory` accepts it: `1M`, `256K` or `1000 bytes`.
+fn format_memory_size(bytes: usize) -> String {
+    const K: usize = 1024;
+    match bytes {
+        0 => "0 bytes".to_string(),
+        b if b % (K * K) == 0 => format!("{}M", b / (K * K)),
+        b if b % K == 0 => format!("{}K", b / K),
+        b => format!("{b} bytes"),
+    }
+}
 
 /// Formats a HistoryError
 pub fn format_history_error(error: &HistoryError, tips_enabled: bool) -> String {
@@ -87,6 +113,26 @@ mod tests {
     use super::*;
     use brubeck::HistoryError;
     use std::io;
+
+    #[test]
+    fn access_violation_names_the_configured_memory_size() {
+        let error = brubeck::interpreter::Error::Cpu(brubeck::CPUError::AccessViolation(0x1000));
+        let result = format_interpreter_error(&error, 4096);
+        assert!(result.starts_with("Memory address out of bounds: 0x00001000"));
+        assert!(result.contains("💡 Tip: This REPL has 4K of memory (0x00000000 to 0x00000fff)"));
+        assert!(result.contains("--memory"));
+
+        let result = format_interpreter_error(&error, 1024 * 1024);
+        assert!(result.contains("1M of memory (0x00000000 to 0x000fffff)"));
+        let result = format_interpreter_error(&error, 1000);
+        assert!(result.contains("1000 bytes of memory (0x00000000 to 0x000003e7)"));
+    }
+
+    #[test]
+    fn other_interpreter_errors_are_unchanged() {
+        let error = brubeck::interpreter::Error::Generic("boom".to_string());
+        assert_eq!(format_interpreter_error(&error, 4096), "boom");
+    }
 
     #[test]
     fn test_format_history_error() {

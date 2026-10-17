@@ -121,7 +121,9 @@ fn run_interactive(
                     last_delta = Some(delta);
                     output
                 })
-                .map_err(|e| e.to_string())
+                .map_err(|e| {
+                    formatting::errors::format_interpreter_error(&e, interpreter.cpu.memory.len())
+                })
         };
 
         // Clear last delta on reset
@@ -242,7 +244,9 @@ fn execute_and_print(
         interpreter
             .interpret(input)
             .map(|delta| formatting::state_delta::format_instruction_result(&delta))
-            .map_err(|e| e.to_string())
+            .map_err(|e| {
+                formatting::errors::format_interpreter_error(&e, interpreter.cpu.memory.len())
+            })
     };
 
     match result {

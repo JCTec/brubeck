@@ -25,8 +25,20 @@ fn test_cpu_error_messages() {
     let err_msg = result.unwrap_err().to_string();
     assert!(err_msg.contains("Memory address out of bounds"));
     assert!(err_msg.contains("💡 Tip:"));
-    assert!(err_msg.contains("1MB of memory"));
-    assert!(err_msg.contains("--memory flag"));
+    // The library doesn't know how it is presented or how big memory is
+    // configured, so the tip names neither a size nor a REPL flag.
+    assert!(!err_msg.contains("1MB"), "{err_msg}");
+    assert!(!err_msg.contains("--memory"), "{err_msg}");
+    assert!(err_msg.contains("end of memory"), "{err_msg}");
+}
+
+#[test]
+fn access_violation_tip_is_true_for_any_memory_size() {
+    let mut small = Interpreter::with_config(4096, 10);
+    small.interpret("LUI x1, 1").unwrap(); // 0x1000, one past the end
+    let err = small.interpret("LW x2, 0(x1)").unwrap_err().to_string();
+    assert!(err.contains("0x00001000"), "{err}");
+    assert!(!err.contains("1MB"), "{err}");
 }
 
 #[test]
