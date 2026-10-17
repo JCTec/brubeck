@@ -58,10 +58,13 @@ jobs:
           node-version: 22
       - name: Install web tooling
         working-directory: web
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: Type-check JavaScript
         working-directory: web
         run: npm run typecheck
+      - name: End-to-end test
+        working-directory: web
+        run: npx playwright install --with-deps chromium && npm run test:e2e
 
       # --- Docs and site bundle ---------------------------------------------
       - name: JavaScript API docs
