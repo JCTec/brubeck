@@ -207,6 +207,8 @@ code, kbd { font-family: var(--mono); font-size: 0.92em; }
   font-family: var(--mono);
   border-bottom: 2px solid var(--panel-rule);
 }
+/* Focusable so keyboard users can scroll it (Safari won't focus scrollers on its own). */
+.registers:focus-visible { outline: 3px solid var(--salmon); outline-offset: -3px; }
 .registers-head { display: flex; align-items: baseline; gap: 14px; }
 .registers-title { letter-spacing: 0.2em; text-transform: uppercase; font-weight: 700; font-size: 14px; }
 .pc-label { font-size: 14px; margin-left: 16px; }
@@ -248,7 +250,9 @@ code, kbd { font-family: var(--mono); font-size: 0.92em; }
 .log .tip { color: var(--panel-text); }
 .log .banner { margin: 6px 0; }
 .log .table { color: #d9d6d0; white-space: pre; overflow-x: auto; } /* never wrap dumps */
-.prompt { display: flex; align-items: baseline; gap: 8px; padding-top: 4px; }
+.prompt { display: flex; align-items: baseline; gap: 8px; padding-top: 4px; border-bottom: 2px solid transparent; }
+/* The caret alone is too faint a focus indicator. */
+.prompt:focus-within { border-bottom-color: var(--salmon); }
 .prompt-pc { color: var(--salmon); font-weight: 700; white-space: nowrap; }
 .prompt-input {
   flex: 1;
