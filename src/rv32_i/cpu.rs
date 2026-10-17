@@ -1050,33 +1050,13 @@ impl CPU {
     /// BEQ and BNE take the branch if registers rs1 and rs2 are equal or
     /// unequal respectively.
     fn rv32i_beq(&mut self, instruction: BType) -> Result<(), CPUError> {
-        let rs1 = self.get_register(instruction.rs1);
-        let rs2 = self.get_register(instruction.rs2);
-
-        if rs1 == rs2 {
-            let mut offset = instruction.imm.as_u32();
-            offset <<= 1; // multiple of 2
-            self.pc = self.pc.wrapping_add(offset);
-        } else {
-            self.pc = self.pc.wrapping_add(Instruction::LENGTH);
-        }
-
-        Ok(())
+        let taken = self.get_register(instruction.rs1) == self.get_register(instruction.rs2);
+        self.branch(taken, &instruction)
     }
 
     fn rv32i_bne(&mut self, instruction: BType) -> Result<(), CPUError> {
-        let rs1 = self.get_register(instruction.rs1);
-        let rs2 = self.get_register(instruction.rs2);
-
-        if rs1 != rs2 {
-            let mut offset = instruction.imm.as_u32();
-            offset <<= 1; // multiple of 2
-            self.pc = self.pc.wrapping_add(offset);
-        } else {
-            self.pc = self.pc.wrapping_add(Instruction::LENGTH);
-        }
-
-        Ok(())
+        let taken = self.get_register(instruction.rs1) != self.get_register(instruction.rs2);
+        self.branch(taken, &instruction)
     }
 
     ///  BLT and BLTU take the branch if rs1 is less than rs2, using signed
@@ -1084,31 +1064,12 @@ impl CPU {
     fn rv32i_blt(&mut self, instruction: BType) -> Result<(), CPUError> {
         let rs1 = self.get_register(instruction.rs1) as i32;
         let rs2 = self.get_register(instruction.rs2) as i32;
-
-        if rs1 < rs2 {
-            let mut offset = instruction.imm.as_u32();
-            offset <<= 1; // multiple of 2
-            self.pc = self.pc.wrapping_add(offset);
-        } else {
-            self.pc = self.pc.wrapping_add(Instruction::LENGTH);
-        }
-
-        Ok(())
+        self.branch(rs1 < rs2, &instruction)
     }
 
     fn rv32i_bltu(&mut self, instruction: BType) -> Result<(), CPUError> {
-        let rs1 = self.get_register(instruction.rs1);
-        let rs2 = self.get_register(instruction.rs2);
-
-        if rs1 < rs2 {
-            let mut offset = instruction.imm.as_u32();
-            offset <<= 1; // multiple of 2
-            self.pc = self.pc.wrapping_add(offset);
-        } else {
-            self.pc = self.pc.wrapping_add(Instruction::LENGTH);
-        }
-
-        Ok(())
+        let taken = self.get_register(instruction.rs1) < self.get_register(instruction.rs2);
+        self.branch(taken, &instruction)
     }
 
     ///  BGE and BGEU take the branch if rs1 is greater than or equal to rs2,
@@ -1116,30 +1077,27 @@ impl CPU {
     fn rv32i_bge(&mut self, instruction: BType) -> Result<(), CPUError> {
         let rs1 = self.get_register(instruction.rs1) as i32;
         let rs2 = self.get_register(instruction.rs2) as i32;
-
-        if rs1 >= rs2 {
-            let mut offset = instruction.imm.as_u32();
-            offset <<= 1; // multiple of 2
-            self.pc = self.pc.wrapping_add(offset);
-        } else {
-            self.pc = self.pc.wrapping_add(Instruction::LENGTH);
-        }
-
-        Ok(())
+        self.branch(rs1 >= rs2, &instruction)
     }
 
     fn rv32i_bgeu(&mut self, instruction: BType) -> Result<(), CPUError> {
-        let rs1 = self.get_register(instruction.rs1);
-        let rs2 = self.get_register(instruction.rs2);
+        let taken = self.get_register(instruction.rs1) >= self.get_register(instruction.rs2);
+        self.branch(taken, &instruction)
+    }
 
-        if rs1 >= rs2 {
-            let mut offset = instruction.imm.as_u32();
-            offset <<= 1; // multiple of 2
-            self.pc = self.pc.wrapping_add(offset);
-        } else {
-            self.pc = self.pc.wrapping_add(Instruction::LENGTH);
+    /// Shared tail of every conditional branch. A taken branch moves the PC by
+    /// the B-immediate (in multiples of 2 bytes); a target that is not 4-byte
+    /// aligned raises an instruction-address-misaligned exception and leaves
+    /// the PC unchanged. A branch that is not taken never faults.
+    fn branch(&mut self, taken: bool, instruction: &BType) -> Result<(), CPUError> {
+        if !taken {
+            return self.increment_pc();
         }
-
+        let target = self.pc.wrapping_add(instruction.imm.as_u32() << 1);
+        if !target.is_multiple_of(4) {
+            return Err(CPUError::MisalignedJump(target));
+        }
+        self.pc = target;
         Ok(())
     }
 

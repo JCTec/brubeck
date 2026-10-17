@@ -132,3 +132,83 @@ fn auipc_wraps_instead_of_panicking() {
     cpu.execute(Instruction::AUIPC(auipc)).unwrap();
     assert_eq!(cpu.get_register(Register::X1), 0x1000);
 }
+
+// --- Jump and branch offsets typed as text ---------------------------------
+//
+// Assembly offsets are byte offsets; the encoded immediate is in units of
+// 2 bytes. The text path must halve the value exactly once.
+
+#[test]
+fn jal_text_offset_is_in_bytes() {
+    let mut i = interp();
+    i.interpret("JAL x1, 8").unwrap();
+    assert_eq!(i.cpu.pc, 8);
+    assert_eq!(i.cpu.get_register(Register::X1), 4);
+}
+
+#[test]
+fn jal_x0_matches_j_pseudo_instruction() {
+    let mut a = interp();
+    let mut b = interp();
+    a.interpret("JAL x0, 12").unwrap();
+    b.interpret("J 12").unwrap();
+    assert_eq!(a.cpu.pc, b.cpu.pc);
+}
+
+#[test]
+fn jal_backward_text_offset() {
+    let mut i = Interpreter::new();
+    for _ in 0..4 {
+        i.interpret("NOP").unwrap(); // pc = 16
+    }
+    i.interpret("JAL x0, -8").unwrap();
+    assert_eq!(i.cpu.pc, 8);
+}
+
+#[test]
+fn jal_accepts_full_byte_offset_range() {
+    let mut i = Interpreter::new();
+    assert!(i.interpret("JAL x0, 1048572").is_ok());
+    assert_eq!(i.cpu.pc, 1048572);
+    assert!(i.interpret("JAL x0, 1048576").is_err());
+}
+
+#[test]
+fn branch_text_offsets_are_in_bytes() {
+    for op in ["BEQ x0, x0", "BGE x0, x0", "BGEU x0, x0"] {
+        let mut i = interp();
+        i.interpret(&format!("{op}, 8")).unwrap();
+        assert_eq!(i.cpu.pc, 8, "{op}, 8 should land on 8");
+    }
+    let mut i = interp();
+    i.interpret("ADDI x1, x0, 1").unwrap(); // pc = 4
+    for op in ["BNE x0, x1", "BLT x0, x1", "BLTU x0, x1"] {
+        let before = i.cpu.pc;
+        i.interpret(&format!("{op}, 12")).unwrap();
+        assert_eq!(i.cpu.pc, before + 12, "{op}, 12");
+    }
+}
+
+#[test]
+fn branch_accepts_full_byte_offset_range() {
+    let mut i = Interpreter::new();
+    assert!(i.interpret("BEQ x0, x0, 4092").is_ok());
+    assert_eq!(i.cpu.pc, 4092);
+    assert!(i.interpret("BEQ x0, x0, 4096").is_err());
+}
+
+#[test]
+fn taken_branch_to_misaligned_target_is_an_error() {
+    let mut i = interp();
+    let result = i.interpret("BEQ x0, x0, 6");
+    assert!(result.is_err(), "target 6 is not 4-byte aligned");
+    assert_eq!(i.cpu.pc, 0, "PC must not change on a faulting branch");
+}
+
+#[test]
+fn not_taken_branch_ignores_misaligned_target() {
+    let mut i = interp();
+    i.interpret("ADDI x1, x0, 1").unwrap();
+    assert!(i.interpret("BEQ x0, x1, 6").is_ok());
+    assert_eq!(i.cpu.pc, 8);
+}

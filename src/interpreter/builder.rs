@@ -310,9 +310,10 @@ fn build_jtype(jtype: &mut JType, args: &[Token], instruction_name: &str) -> Res
         }
 
         jtype.rd = *rd;
+        // Assembly offsets are in bytes; the J-immediate encodes multiples of 2.
         jtype
             .imm
-            .set_signed(*imm)
+            .set_signed(*imm / 2)
             .map_err(|e| Error::Generic(format!("{e:?}")))?;
         Ok(*jtype)
     } else {
@@ -360,9 +361,10 @@ fn build_btype(btype: &mut BType, args: &[Token], instruction_name: &str) -> Res
 
         btype.rs1 = *rs1;
         btype.rs2 = *rs2;
+        // Assembly offsets are in bytes; the B-immediate encodes multiples of 2.
         btype
             .imm
-            .set_signed(*imm)
+            .set_signed(*imm / 2)
             .map_err(|e| Error::Generic(format!("{e:?}")))?;
         Ok(*btype)
     } else {

@@ -313,7 +313,7 @@ fn test_branch_offset_encoding() {
         (4, 8),         // Forward by 8 bytes (2 instructions)
         (-2, -4),       // Backward by 4 bytes
         (-4, -8),       // Backward by 8 bytes
-        (2047, 4094),   // Max positive (12-bit signed)
+        (2046, 4092),   // Max positive 4-byte-aligned offset
         (-2048, -4096), // Max negative
     ];
 
@@ -329,6 +329,13 @@ fn test_branch_offset_encoding() {
         let expected_pc = (1000i32 + actual_offset) as u32;
         cpu.assert_pc(expected_pc, &desc);
     }
+
+    // The max encodable offset (2047 -> 4094 bytes) is only 2-byte aligned.
+    // Without the C extension, a taken branch to it must fault and leave PC alone.
+    cpu.pc = 1000;
+    inst.imm.set_signed(2047).unwrap();
+    assert!(cpu.execute(Instruction::BEQ(inst)).is_err());
+    cpu.assert_pc(1000, "faulting branch leaves PC unchanged");
 }
 
 #[test]
