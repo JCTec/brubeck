@@ -19,6 +19,27 @@ Not yet verified anywhere: the real `wasm32` / `wasm-pack` build (blocked in the
 
 Known follow-ups: hex literals above `0x7FFFFFFF` (e.g. `LI x2, 0xDEADBEEF`) are rejected by the parser; the AccessViolation tip always says "1MB" regardless of the configured memory size.
 
+## Status — round 2, Phase A: verified with the real toolchain (2026-10-16)
+
+Everything round 1 couldn't build was built and run locally (Rust 1.99.1, wasm-pack with wasm-bindgen 0.2.129, Node 26, Chromium via Playwright):
+
+- **REPL binary** with real clap/crossterm: builds; `-e`/`-v` output and interactive `/p`, `/n` checked by eye (through a pty). `LI` steps back as one entry; the memory-byte count reads "4 memory bytes changed" for `SW`.
+- **Bindings:** the generated `.d.ts` matches everything `brubeck.js` assumes; failures throw the `RawError` instance. **`.wasm`: 151 KB raw, 55 KB gzipped** (target < 150 KB).
+- **Web app on the real wasm:** `tsc --checkJs` is clean, and all 19 checks in `tests/lab.e2e.mjs` pass on the first run. Checked by eye at 1280 px and 390 px against the design PDF, and keyboard-only.
+
+Found broken and fixed:
+
+- `cargo clippy -D warnings` failed on the binary (a new `collapsible_match` lint in clippy 1.99). Fixed with match guards, which behave the same here.
+- `npm run docs` exited 1: JSDoc can't parse the TypeScript type syntax that `checkJs` code uses (23 sites). Docs now come from **TypeDoc** (departs from the plan's "JSDoc site"), which reads the same comments through the TypeScript compiler, so the docs and the type check can't disagree.
+- Keyboard focus: the scrollable register panel had the default focus ring in Chrome and wasn't reachable at all in Safari; the prompt had `outline: 0`. Both now have design-coloured focus indicators.
+
+Departures:
+
+- Lesson 3's tab is **"History"**, not "Undo" as in the design PDF, and lesson text says "step back" rather than "undo". CLAUDE.md's naming rule takes precedence over the mock-up.
+- CI installs with `npm ci` (lockfile committed) and runs the e2e test after the type check.
+- `Cargo.lock` didn't change: it already had the wasm-bindgen entries.
+- Not done: a VoiceOver pass. The accessibility tree (landmarks, names, the `log` live region) was checked through Playwright instead.
+
 ---
 
 ---
