@@ -1,0 +1,16 @@
+{
+  "name": "brubeck-web",
+  "private": true,
+  "type": "module",
+  "description": "Browser front end for the Brubeck RV32I emulator",
+  "license": "Apache-2.0",
+  "scripts": {
+    "typecheck": "tsc -p jsconfig.json",
+    "docs": "jsdoc -c jsdoc.json",
+    "serve": "python3 -m http.server 8000"
+  },
+  "devDependencies": {
+    "jsdoc": "^4.0.4",
+    "typescript": "^5.9.3"
+  }
+}

@@ -72,3 +72,15 @@ fn test_error_equality() {
     let err2 = HistoryError::AtBeginning;
     assert_eq!(err1, err2);
 }
+
+#[test]
+fn interpret_error_is_matchable_by_external_code() {
+    use brubeck::interpreter::{Error, Interpreter};
+    let mut interpreter = Interpreter::new();
+    match interpreter.interpret("ADDD x1, x2, x3") {
+        Err(Error::UnknownInstruction { suggestion, .. }) => {
+            assert_eq!(suggestion.as_deref(), Some("ADD or ADDI"));
+        }
+        other => panic!("expected UnknownInstruction, got {other:?}"),
+    }
+}

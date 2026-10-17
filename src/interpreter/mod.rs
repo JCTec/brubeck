@@ -42,9 +42,12 @@ use state_history::StateHistory;
 
 // Re-export types for public API
 pub use errors::{ExecutionError, HistoryError, ParseError};
+/// The error returned by [`Interpreter::interpret`]. Public so callers (such as
+/// the WebAssembly bindings) can match on variants instead of parsing messages.
+pub use types::Error;
 
 // Internal use only - not part of public API
-use types::{Command, Error};
+use types::Command;
 
 /// Parse an assembly instruction string into a list of executable instructions
 ///

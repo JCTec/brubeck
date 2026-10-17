@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Brubeck · RISC-V in the browser</title>
+  <meta name="description" content="An RV32I RISC-V emulator compiled from Rust to WebAssembly.">
+  <style>
+    :root {
+      --bg: #fbfaf7; --fg: #1d1d1b; --muted: #6b6a66; --line: #e3e1da;
+      --accent: #2f6f5e; --error: #b3261e; --changed: #fff2b8;
+      --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #141413; --fg: #ecebe6; --muted: #9a9890; --line: #2c2b28;
+              --accent: #7cc4ad; --error: #f2b8b5; --changed: #4a4220; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--fg);
+           font: 15px/1.5 system-ui, sans-serif; }
+    main { max-width: 760px; margin: 0 auto; padding: 32px 16px 48px; }
+    h1 { font-size: 22px; margin: 0 0 4px; }
+    .lede { color: var(--muted); margin: 0 0 24px; }
+    #log { font: 13px/1.6 var(--mono); border: 1px solid var(--line); border-radius: 8px;
+           padding: 12px; min-height: 240px; max-height: 55vh; overflow-y: auto;
+           white-space: pre-wrap; word-break: break-word; }
+    .in { color: var(--accent); }
+    .err { color: var(--error); }
+    .tip { color: var(--muted); }
+    form { display: flex; gap: 8px; margin-top: 12px; }
+    input { flex: 1; min-width: 0; font: 14px var(--mono); padding: 10px 12px;
+            border: 1px solid var(--line); border-radius: 8px; background: transparent; color: inherit; }
+    input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+    button { font: inherit; padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px;
+             background: transparent; color: inherit; cursor: pointer; }
+    button:hover { border-color: var(--accent); }
+    #regs { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 2px 12px; margin-top: 20px; font: 12px/1.7 var(--mono); }
+    #regs .changed { background: var(--changed); border-radius: 3px; }
+    #regs b { color: var(--muted); font-weight: normal; display: inline-block; width: 5ch; }
+    footer { margin-top: 32px; color: var(--muted); font-size: 13px; }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Brubeck</h1>
+    <p class="lede">An RV32I RISC-V emulator written in Rust, running here as WebAssembly.
+      Type an instruction, or <code>/prev</code>, <code>/next</code>, <code>/reset</code>.</p>
+
+    <div id="log" aria-live="polite">Loading WebAssembly…</div>
+    <form id="prompt" autocomplete="off">
+      <input id="line" placeholder="ADDI x1, zero, 42" aria-label="Assembly instruction" disabled>
+      <button type="submit">Run</button>
+    </form>
+    <div id="regs" aria-label="Registers"></div>
+
+    <footer>
+      Based on <a href="https://github.com/peat/brubeck">peat/brubeck</a> (Apache-2.0).
+      This page is the Phase 1 smoke test; the full interface comes next.
+    </footer>
+  </main>
+  <script type="module" src="js/smoke.js"></script>
+</body>
+</html>
