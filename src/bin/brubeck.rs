@@ -202,10 +202,11 @@ fn format_error(error: &str, with_tips: bool) -> String {
         // Return the full error message with tips
         error.to_string()
     } else {
-        // Strip out the educational content (💡 Tips)
+        // Strip out the educational content: a tip runs to the end of the
+        // message, so everything from the first "💡 Tip:" line on goes.
         let lines: Vec<&str> = error
             .lines()
-            .filter(|line| !line.starts_with("💡 Tip:"))
+            .take_while(|line| !line.starts_with("💡 Tip:"))
             .collect();
         lines.join("\n")
     }
@@ -364,4 +365,20 @@ fn run_script_mode(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_error;
+
+    #[test]
+    fn without_tips_drops_the_whole_tip_not_just_its_first_line() {
+        let error =
+            "Memory address out of bounds: 0x00001000\n💡 Tip: first\nCommon causes:\n- one";
+        assert_eq!(
+            format_error(error, false),
+            "Memory address out of bounds: 0x00001000"
+        );
+        assert_eq!(format_error(error, true), error);
+    }
 }
