@@ -140,6 +140,18 @@ impl Emulator {
             .map_err(|e| convert::history_error(&e).into())
     }
 
+    /// How many steps back through history are available.
+    #[wasm_bindgen(getter, js_name = historyPosition)]
+    pub fn history_position(&self) -> usize {
+        self.inner.history_position()
+    }
+
+    /// Total number of steps recorded in history.
+    #[wasm_bindgen(getter, js_name = historyLength)]
+    pub fn history_length(&self) -> usize {
+        self.inner.history_len()
+    }
+
     /// Clears registers, memory, CSRs and history.
     pub fn reset(&mut self) {
         self.inner.reset();

@@ -293,6 +293,15 @@ export class Emulator {
   }
 
   /**
+   * Where the emulator is in its history: `position` steps can be undone and
+   * `length - position` redone.
+   * @returns {{position: number, length: number}}
+   */
+  get history() {
+    return this.#call((raw) => ({ position: raw.historyPosition, length: raw.historyLength }));
+  }
+
+  /**
    * Total memory size in bytes.
    * @returns {number}
    */

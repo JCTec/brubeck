@@ -229,6 +229,17 @@ impl Interpreter {
         Ok(delta)
     }
 
+    /// How many steps back through history are available. Equals
+    /// [`history_len`](Self::history_len) unless the user has stepped back.
+    pub fn history_position(&self) -> usize {
+        self.history.position()
+    }
+
+    /// Total number of steps recorded in history (bounded by the history limit).
+    pub fn history_len(&self) -> usize {
+        self.history.len()
+    }
+
     /// Navigate to the previous state in history, returning the applied delta
     pub fn previous_state(&mut self) -> Result<StateDelta, HistoryError> {
         if let Some(delta) = self.history.get_previous_delta() {

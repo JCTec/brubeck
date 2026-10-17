@@ -410,3 +410,25 @@ fn csr_instructions_advance_pc() {
         assert_eq!(delta.pc_change, (0, 4), "{op} must advance the PC by 4");
     }
 }
+
+// --- History position -------------------------------------------------------
+
+#[test]
+fn history_position_tracks_navigation() {
+    let mut i = Interpreter::with_config(MEM, 3);
+    assert_eq!((i.history_position(), i.history_len()), (0, 0));
+    i.interpret("ADDI x1, zero, 1").unwrap();
+    i.interpret("LI x2, 0x12345678").unwrap(); // one entry
+    assert_eq!((i.history_position(), i.history_len()), (2, 2));
+    i.previous_state().unwrap();
+    assert_eq!((i.history_position(), i.history_len()), (1, 2));
+    i.interpret("ADDI x3, zero, 3").unwrap(); // truncates the redo branch
+    assert_eq!((i.history_position(), i.history_len()), (2, 2));
+    i.interpret("NOP").unwrap();
+    i.interpret("NOP").unwrap(); // limit 3 drops the oldest
+    assert_eq!((i.history_position(), i.history_len()), (3, 3));
+    assert!(i.interpret("BOGUS").is_err()); // errors don't record
+    assert_eq!((i.history_position(), i.history_len()), (3, 3));
+    i.reset();
+    assert_eq!((i.history_position(), i.history_len()), (0, 0));
+}
