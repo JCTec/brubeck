@@ -4,6 +4,10 @@ A RISC-V assembly REPL for learning and experimentation. Type instructions, see 
 
 Brubeck implements the RV32I base integer instruction set (the 32-bit version of RISC-V). It's written in Rust and can be used as a library or through the interactive REPL.
 
+## Try it in the browser
+
+**[Brubeck Lab](https://jctec.github.io/brubeck/)** runs the same emulator, compiled to WebAssembly, as a six-step guided introduction to RISC-V assembly, with a live register and memory view, a history timeline, and shareable sessions. The source is in [`web/`](web/README.md).
+
 ## Quick Start
 
 ```bash
